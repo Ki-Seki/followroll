@@ -1,0 +1,134 @@
+:root {
+  --bg: #ffffff; --panel: #fafafa; --hover: #f4f4f5;
+  --fg: #18181b; --mute: #71717a; --faint: #8e8e96; --line: #e4e4e7;
+  /* Activity, in the greens of GitHub's contribution graph */
+  --m0: #ebedf0; --m1: #9be9a8; --m2: #40c463; --m3: #30a14e; --m4: #216e39;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #09090b; --panel: #111113; --hover: #18181b;
+    --fg: #f4f4f5; --mute: #a1a1aa; --faint: #63636b; --line: #27272a;
+    --m0: #1c1c20; --m1: #0e4429; --m2: #006d32; --m3: #26a641; --m4: #39d353;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 var(--font); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+img { display: block; border-radius: 50%; background: var(--hover); }
+svg { width: 14px; height: 14px; flex: none; }
+h1, h2, h3, p { margin: 0; }
+:focus-visible { outline: 2px solid var(--m3); outline-offset: 2px; border-radius: 6px; }
+
+.wrap { max-width: 1048px; margin: 0 auto; padding: 0 24px; }
+
+/* ----------------------------------------------------------- header */
+.head { display: flex; align-items: center; gap: 14px; padding: 28px 0 18px; }
+.owner img { transition: transform .2s var(--ease); }
+.owner:hover img { transform: scale(1.06); }
+.head h1 { font-size: 20px; line-height: 1.3; font-weight: 650; letter-spacing: -.015em; }
+.head h1 a:hover { text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 4px; }
+
+.bar { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+.bar .wrap { display: flex; align-items: center; height: 41px; }
+.tabs { display: flex; gap: 24px; align-self: stretch; margin-bottom: -1px; }
+.tabs button { display: inline-flex; align-items: center; gap: 7px; padding: 0 1px; border-bottom: 2px solid transparent; color: var(--mute); font-size: 14px; font-weight: 500; transition: color .15s; }
+.tabs button:hover { color: var(--fg); }
+.tabs button.on { color: var(--fg); border-color: var(--fg); font-weight: 600; }
+.tabs span { min-width: 22px; padding: 0 6px; border-radius: 999px; background: var(--hover); color: var(--mute); font-size: 12px; font-weight: 500; line-height: 20px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------- columns */
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) 352px; gap: 56px; align-items: start; padding-top: 4px; padding-bottom: 72px; scroll-margin-top: 41px; }
+
+.feed h2 { font-size: 13px; font-weight: 600; color: var(--mute); margin: 28px 0 6px; }
+.post { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 14px; padding: 14px 12px; margin: 0 -12px; border-radius: 12px; transition: background .15s; }
+.post:hover { background: var(--hover); }
+.post > img { margin-top: 2px; }
+.meta { display: flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--mute); white-space: nowrap; min-width: 0; }
+.meta a { position: relative; z-index: 1; color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.meta a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.meta span { overflow: hidden; text-overflow: ellipsis; }
+.meta span::before, .meta time::before { content: "·"; margin-right: 6px; color: var(--faint); }
+.post h3 { font-size: 16.5px; line-height: 1.4; font-weight: 600; letter-spacing: -.01em; margin-top: 3px; overflow-wrap: anywhere; }
+/* The whole row opens the post; a title already read goes quiet. */
+.post h3 a::after { content: ""; position: absolute; inset: 0; border-radius: 12px; }
+.post h3 a:visited { color: var(--mute); }
+.post p { margin-top: 4px; color: var(--mute); font-size: 14px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; text-wrap: pretty; }
+.extras { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 8px; }
+.via { color: var(--mute); font-size: 12.5px; }
+.stat { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; color: var(--mute); font-size: 12.5px; font-variant-numeric: tabular-nums; transition: color .15s; }
+.stat:hover { color: var(--fg); }
+.stat i { width: 14px; height: 14px; border-radius: 3px; background: #ff6600; color: #fff; font: 700 10px/14px var(--font); text-align: center; }
+
+.more, .all { height: 40px; border: 1px solid var(--line); border-radius: 10px; color: var(--mute); font-size: 13.5px; font-weight: 500; transition: background .15s, color .15s; }
+.more { display: block; width: 100%; margin-top: 16px; }
+.more:hover, .all:hover { background: var(--hover); color: var(--fg); }
+.empty { color: var(--mute); text-align: center; padding: 64px 0; }
+
+/* ------------------------------------------------------------ people */
+.side { position: sticky; top: 41px; max-height: calc(100vh - 41px); overflow: hidden auto; margin: 0 -10px; padding: 28px 10px 24px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.side-head { display: flex; align-items: baseline; gap: 7px; margin-bottom: 8px; font-size: 13px; }
+.side-head h2 { font-size: 13px; font-weight: 600; }
+.side-head span { color: var(--mute); font-variant-numeric: tabular-nums; }
+/* The key to the month squares, above them */
+.side-head .key { margin-left: auto; margin-right: 40px; font-size: 12px; }
+.people { display: flex; flex-direction: column; margin: 0 -10px; }
+.person { display: flex; align-items: center; border-radius: 10px; transition: background .15s; }
+.person:hover { background: var(--hover); }
+.person.on { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); }
+.pick { flex: 1; min-width: 0; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 8px 4px 8px 10px; border-radius: 10px; text-align: left; }
+.gh { flex: none; width: 32px; height: 32px; margin-right: 4px; display: grid; place-items: center; border-radius: 8px; color: var(--faint); transition: color .15s, background .15s; }
+.gh:hover { color: var(--fg); background: var(--line); }
+.gh svg { width: 15px; height: 15px; }
+.face { display: block; border-radius: 50%; }
+.id { min-width: 0; line-height: 1.35; }
+.id b, .id small { display: block; overflow-wrap: anywhere; }
+.id b { font-size: 14px; font-weight: 600; }
+.id em { display: none; font-style: normal; }
+.id small { font-size: 12.5px; color: var(--mute); }
+.months { display: grid; grid-template-columns: repeat(12, 6px); gap: 2px; }
+.months i { width: 6px; height: 6px; border-radius: 1.5px; background: var(--m0); }
+.months .m1 { background: var(--m1); } .months .m2 { background: var(--m2); }
+.months .m3 { background: var(--m3); } .months .m4 { background: var(--m4); }
+.all { display: block; width: 100%; margin-top: 10px; height: 36px; font-size: 13px; }
+
+/* ----------------------------------------------------------- footer */
+.foot { border-top: 1px solid var(--line); color: var(--mute); font-size: 13px; }
+.foot .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 24px; padding-top: 22px; padding-bottom: 40px; }
+.foot a { color: var(--fg); margin-left: 18px; }
+.foot span:first-child a, .foot a:first-child { margin-left: 0; }
+.foot a:hover { text-decoration: underline; text-underline-offset: 3px; }
+noscript .empty { padding: 20vh 24px; }
+
+/* ----------------------------------------------------------- narrow */
+@media (max-width: 880px) {
+  .wrap { padding: 0 16px; }
+  .head { padding: 20px 0 16px; }
+  .head h1 { font-size: 18px; }
+  .cols { grid-template-columns: minmax(0, 1fr); gap: 0; padding-bottom: 48px; }
+  /* People become a row of faces above the posts; the ring shows how
+     recently each one posted. */
+  .side { position: static; order: -1; max-height: none; overflow: visible; margin: 0; padding: 16px 0 0; }
+  .side-head, .months, .id small, .id b, .all { display: none; }
+  .meta span { display: none; }   /* the site's address gives way to the name */
+  /* Under a face there is room for a first name only */
+  .id em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--mute); }
+  .person.on .id em { color: var(--fg); font-weight: 600; }
+  .people { flex-direction: row; gap: 2px; margin: 0 -16px; padding: 2px 12px 12px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+  .people::-webkit-scrollbar { display: none; }
+  .person, .person:hover, .person.on { flex: none; background: none; box-shadow: none; }
+  .pick { display: flex; flex-direction: column; gap: 6px; width: 66px; padding: 6px 0 4px; }
+  .gh { display: none; }
+  .face { padding: 2px; border: 2px solid var(--m0); }
+  .face img { width: 40px; height: 40px; }
+  .heat1 .face { border-color: var(--m1); } .heat2 .face { border-color: var(--m2); }
+  .heat3 .face { border-color: var(--m3); } .heat4 .face { border-color: var(--m4); }
+  .person.on .face { border-color: var(--fg); }
+  .id { width: 62px; text-align: center; }
+  .feed h2 { margin-top: 22px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

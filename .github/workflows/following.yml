@@ -1,0 +1,58 @@
+name: Following
+
+on:
+  # Every six hours, at minute 23
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  # Lets the last step keep this schedule from being switched off
+  actions: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect posts and build the page
+        # Options are repository variables (Settings → Secrets and variables →
+        # Actions → Variables), so a fork never has to edit this file and can
+        # always sync with upstream. Unset ones fall back to their defaults.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FOLLOWING_LOGIN: ${{ vars.FOLLOWING_LOGIN }}
+          FOLLOWING_TITLE: ${{ vars.FOLLOWING_TITLE }}
+          FOLLOWING_MAX_PEOPLE: ${{ vars.FOLLOWING_MAX_PEOPLE }}
+          FOLLOWING_DISCOVER: ${{ vars.FOLLOWING_DISCOVER }}
+        run: python3 following.py --output _site
+      - uses: actions/upload-pages-artifact@v3
+      - name: Keep the schedule alive
+        # GitHub switches a schedule off after 60 days without repository
+        # activity; enabling the workflow again resets that clock.
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/following.yml/enable" --silent \
+            || echo "::notice::Could not re-enable the workflow; if the schedule stops, turn it back on from the Actions tab."
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
