@@ -2,11 +2,9 @@
 
 See what the people you follow on GitHub are writing.
 
-<p>
-  <img src=".github/desktop.png" alt="The Following page on a computer: a timeline of posts, with the people who wrote them on the right" width="76%">
-  <img src=".github/phone.png" alt="The same page on a phone" width="22%">
-</p>
-<sub>Screenshots show made-up sample data.</sub>
+<img src=".github/screenshot.png" alt="The page in a browser window and on a phone: a timeline of posts, with the people who wrote them alongside">
+
+<sub>The screenshot shows made-up sample data.</sub>
 
 It reads who you follow, finds their blogs on its own, and lists their latest
 posts. A Discover tab shows blogs one step further out: people followed by the
