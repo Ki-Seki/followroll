@@ -96,6 +96,47 @@ h1, h2, h3, p { margin: 0; }
 .months .m3 { background: var(--m3); } .months .m4 { background: var(--m4); }
 .all { display: block; width: 100%; margin-top: 10px; height: 36px; font-size: 13px; }
 
+/* ------------------------------------------------------------ about */
+.about { max-width: 680px; padding: 4px 0 80px; scroll-margin-top: 41px; }
+.about h2 { font-size: 18px; font-weight: 650; letter-spacing: -.012em; margin: 48px 0 10px; }
+.about p { margin-top: 10px; text-wrap: pretty; }
+.about b { font-weight: 600; }
+
+/* The page in four steps, with this page's own numbers */
+.flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; align-items: center; gap: 8px; margin: 18px 0 16px; }
+.step { display: grid; gap: 3px; align-content: start; height: 100%; padding: 14px 14px 13px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.step svg { width: 17px; height: 17px; color: var(--mute); margin-bottom: 9px; }
+.step b { font-size: 22px; font-weight: 650; line-height: 1.15; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.step small { color: var(--mute); font-size: 12.5px; line-height: 1.4; }
+.flow > i { color: var(--faint); }
+.notes { margin: 0; padding: 0 0 0 20px; color: var(--mute); font-size: 14px; }
+.notes li { padding: 3px 0 3px 4px; }
+.notes li::marker { color: var(--faint); }
+
+/* Who follows whom */
+.graph { margin: 18px 0 0; padding: 18px 20px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.graph svg { width: 100%; height: auto; overflow: visible; }
+.graph path { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.graph path.strong { stroke: var(--m3); }
+.graph .rim { fill: var(--panel); }
+.graph text { fill: var(--fg); font-size: 13px; font-weight: 600; }
+.graph text.dim { fill: var(--mute); font-size: 12px; font-weight: 400; }
+
+/* What the small figures on a post mean */
+.legend { display: grid; grid-template-columns: max-content minmax(0, 1fr); margin: 12px 0 0; border-top: 1px solid var(--line); }
+.legend dt, .legend dd { margin: 0; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.legend dt { display: flex; align-items: center; gap: 14px; padding-right: 28px; }
+.legend dd { color: var(--mute); font-size: 14px; }
+
+.steps { margin: 14px 0 20px; padding: 0; list-style: none; counter-reset: step; }
+.steps li { position: relative; padding: 7px 0 7px 38px; counter-increment: step; }
+.steps li::before { content: counter(step); position: absolute; left: 0; top: 6px; width: 24px; height: 24px; border-radius: 50%; background: var(--hover); color: var(--mute); font-size: 12.5px; font-weight: 600; line-height: 24px; text-align: center; }
+.button { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 999px; background: var(--fg); color: var(--bg); font-size: 14px; font-weight: 600; transition: opacity .15s; }
+.button:hover { opacity: .86; }
+.button svg { width: 16px; height: 16px; }
+.quiet { margin-left: 20px; color: var(--mute); font-size: 13.5px; }
+.quiet:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
+
 /* ----------------------------------------------------------- footer */
 .foot { border-top: 1px solid var(--line); color: var(--mute); font-size: 13px; }
 .foot .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 24px; padding-top: 22px; padding-bottom: 40px; }
@@ -130,5 +171,14 @@ noscript .empty { padding: 20vh 24px; }
   .person.on .face { border-color: var(--fg); }
   .id { width: 62px; text-align: center; }
   .feed h2 { margin-top: 22px; }
+  .about h2 { margin-top: 38px; }
+  .flow { grid-template-columns: 1fr 1fr; }
+  .flow > i { display: none; }
+  .graph { padding: 14px 10px 12px; }
+  .legend { grid-template-columns: minmax(0, 1fr); }
+  .legend dt { padding-bottom: 0; border-bottom: 0; }
+  .legend dd { padding-top: 6px; }
+  .legend .wide { display: none; }   /* the month squares are not shown at this width */
+  .quiet { display: block; margin: 14px 0 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
