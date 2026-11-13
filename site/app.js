@@ -68,6 +68,13 @@ function writeHash() {
 
 const list = () => (state.view === 'discover' ? data.discover : data);
 
+// Every post of a list, newest first, each with its author. Worked out once.
+function timeline(of) {
+  of.timeline ??= of.blogs.flatMap(b => b.posts.map(p => ({ ...p, login: b.login, name: b.name, avatar: b.avatar })))
+    .sort((a, b) => b.ts - a.ts);
+  return of.timeline;
+}
+
 function personHTML(b) {
   const on = state.who === b.login;
   // In the narrow side column: "via Ke Fang +2" rather than a list of names
@@ -105,7 +112,7 @@ ${extras ? `<div class="extras">${extras}</div>` : ''}
 }
 
 function feedHTML() {
-  const { blogs, posts: everything } = list();
+  const { blogs } = list(), everything = timeline(list());
   const byLogin = new Map(blogs.map(b => [b.login, b]));
   const who = byLogin.get(state.who);
   let posts = everything;

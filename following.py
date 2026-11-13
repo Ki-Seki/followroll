@@ -15,6 +15,10 @@ count from there.
 The Discover list looks one step further: the accounts followed by the people
 you follow. The ones most of them follow are tried first.
 
+The list grows from run to run. A post stays after it has dropped out of its
+blog's feed, so each blog's history builds up; and every run looks at another
+batch of second-degree accounts it has not seen, until all of them are covered.
+
 Writes following.json into the output folder, next to the page that displays
 it (the files in site/), and state.json, what this run learned about each
 account. The next run reads both back from the published site: someone known
@@ -36,8 +40,8 @@ Environment (an empty value counts as unset):
   FOLLOWING_PREVIOUS_URL    where the previous run's following.json is published
                             (default: this repository's GitHub Pages address)
   FOLLOWING_MAX_PEOPLE      most followed accounts to look at, newest first (default: 500)
-  FOLLOWING_DISCOVER        most second-degree accounts to look at for the Discover
-                            list; 0 turns it off (default: 200)
+  FOLLOWING_DISCOVER        how many second-degree accounts not seen before each
+                            run looks at for Discover; 0 turns it off (default: 200)
   FOLLOWING_WORKERS         concurrent sites (default: 24)
 """
 
@@ -73,9 +77,11 @@ MAX_BYTES = 3_000_000
 MAX_PEOPLE = int(os.environ.get("FOLLOWING_MAX_PEOPLE") or 500)
 WORKERS = int(os.environ.get("FOLLOWING_WORKERS") or 24)
 DISCOVER_PEOPLE = int(os.environ.get("FOLLOWING_DISCOVER") or 200)
-POSTS_PER_BLOG = 10   # posts kept per blog
-DISCOVER_POSTS = 3    # posts kept per blog on the Discover list, none older than a year
-MAX_POSTS = 200       # posts kept in all
+POSTS_PER_BLOG = 100    # posts kept per blog, as they build up over the runs
+DISCOVER_POSTS = 3      # posts kept per blog on the Discover list, none older than a year
+MAX_POSTS = 1500        # posts kept in all; the oldest go first
+COUNTED_POSTS = 20      # newest posts of a blog whose comment counts are read
+DISCOVER_LIMIT = 2000   # second-degree accounts considered at all, best-ranked first
 
 # A profile link to an account on someone else's platform is not a blog.
 NOT_A_BLOG = (
@@ -381,6 +387,8 @@ def read_feed(url, validators=None):
              and post["ts"] < now + 86400 and not PLACEHOLDER_POST.search(post["url"])
              and urlparse(post["url"]).scheme in ("http", "https")]   # a feed is untrusted input
     posts.sort(key=lambda post: post["ts"], reverse=True)
+    # A feed can list the same address twice; the newer entry stands.
+    posts = list({post["url"]: post for post in reversed(posts)}.values())[::-1]
     return (final, posts, authors, fresh) if posts else None
 
 
@@ -677,9 +685,9 @@ def hacker_news(post):
 
 def add_hacker_news(blogs):
     """Looks up posts not seen before and recent ones; older ones keep what they had."""
-    recent = time.time() - 14 * 86400
+    recent, old = time.time() - 14 * 86400, time.time() - 730 * 86400
     posts = [post for blog in blogs for post in blog["posts"]
-             if post["url"] not in SEEN or post["ts"] > recent]
+             if post["ts"] > recent or (post["url"] not in SEEN and post["ts"] > old)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(hacker_news, posts))
 
@@ -762,23 +770,43 @@ def patience(key, definite):
     return ((30 + spread % 10) if definite else (2 + spread % 3)) * 86400
 
 
-def new_blog(person, site, feed, posts):
+def new_blog(person, site, feed, posts, earlier=()):
+    """A blog's entry: the posts in its feed now, then the older ones seen on earlier runs.
+
+    Within the stretch of time the feed covers, the feed is the truth: a post
+    missing there was removed or moved by its author. Older than that, a post
+    has only scrolled out of the feed, and stays."""
+    oldest = min(post["ts"] for post in posts)
+    current = {post["url"] for post in posts}
+    before = {post["url"]: post for post in earlier}
+    for post in posts:   # counts carried over until they are read again
+        for field in ("thread", "hn"):
+            if field in before.get(post["url"], {}):
+                post[field] = before[post["url"]][field]
+    kept = [post for post in earlier if post["ts"] < oldest and post["url"] not in current]
     return {"login": person["login"], "name": person.get("name") or person["login"],
             "avatar": person.get("avatarUrl"), "site": site, "host": host(site), "feed": feed,
             "self": bool(person.get("self")),
-            "months": months(post["ts"] for post in posts),
-            "posts": posts[:POSTS_PER_BLOG]}
+            "months": months(post["ts"] for post in posts + kept),
+            "posts": (posts + kept)[:POSTS_PER_BLOG]}
+
+
+def recent_dates(*lists):
+    """Post times from the last 400 days, for the month squares."""
+    start = time.time() - 400 * 86400
+    return sorted({ts for dates in lists for ts in dates if ts > start})
 
 
 def refresh_counts(posts, comments, first_page=None):
     """Reads comment and like counts again where they may have moved."""
     if not comments:
         return
-    if comments["system"] in ("disqus", "twikoo"):   # one request covers every post
-        todo = posts
+    newest = posts[:COUNTED_POSTS]
+    if comments["system"] in ("disqus", "twikoo"):   # one request covers them all
+        todo = newest
     else:   # one request a post, so only new and recent ones
         recent = time.time() - 90 * 86400
-        todo = [post for post in posts if post["url"] not in SEEN or post["ts"] > recent]
+        todo = [post for post in newest if post["url"] not in SEEN or post["ts"] > recent]
     if todo:
         read_threads(todo, comments, first_page if todo[0] is posts[0] else None)
 
@@ -787,26 +815,23 @@ def revisit(person, known, full):
     """The blog of an account whose feed is already known, or None if the feed has gone."""
     key = person["login"].lower()
     before = BLOGS.get(person["login"])
-    # "Has it changed?" is only worth asking when the old entry can be reused.
-    reusable = before and (known.get("full") or not full)
+    # "Has it changed?" is only worth asking when the old entry can be reused:
+    # it must hold as many posts as asked for, and have been built from the
+    # whole feed rather than its first few posts, as earlier versions did.
+    reusable = before and (known.get("full") or not full) and known.get("whole")
     feed = read_feed(known["feed"], known.get("validators") if reusable else None)
     if feed is None:
         return None
     comments = known.get("comments")
     if feed == "same":
         blog = {**before, "name": person.get("name") or person["login"], "avatar": person.get("avatarUrl"),
-                "self": bool(person.get("self")), "months": months(known.get("dates") or [])}
+                "self": bool(person.get("self")), "months": months(recent_dates(known.get("dates") or []))}
         blog.pop("via", None), blog.pop("via_count", None)
         refresh_counts(blog["posts"], comments)
         NEW[key] = {**known, "checked": int(time.time()), "failing": None}
         return blog
     address, posts, _, validators = feed
-    blog = new_blog(person, known["site"], address, posts)
-    earlier = {post["url"]: post for post in (before or {}).get("posts", [])}
-    for post in blog["posts"]:   # counts carried over until they are read again
-        for field in ("thread", "hn"):
-            if field in earlier.get(post["url"], {}):
-                post[field] = earlier[post["url"]][field]
+    blog = new_blog(person, known["site"], address, posts, (before or {}).get("posts", []))
     page = None
     if blog["posts"][0]["url"] not in SEEN:
         # A new post: a chance to notice comments the blog has added since.
@@ -816,7 +841,8 @@ def revisit(person, known, full):
             comments = comment_system(page, Tags(page), person["login"])
     refresh_counts(blog["posts"], comments, page)
     NEW[key] = {**known, "checked": int(time.time()), "feed": address, "validators": validators,
-                "comments": comments, "dates": [post["ts"] for post in posts], "full": full, "failing": None}
+                "comments": comments, "full": full, "whole": True, "failing": None,
+                "dates": recent_dates(known.get("dates") or [], [post["ts"] for post in posts])}
     return blog
 
 
@@ -850,10 +876,10 @@ def blog_of(person, full=True):
         page = text_of(response[1]) if response else None
         comments = comment_system(page, Tags(page), person["login"]) if page else None
         if comments:
-            read_threads(blog["posts"], comments, page)
+            read_threads(blog["posts"][:COUNTED_POSTS], comments, page)
         NEW[key] = {"website": website, "checked": int(time.time()), "site": site, "feed": feed,
                     "validators": validators, "comments": comments,
-                    "dates": [post["ts"] for post in posts], "full": full}
+                    "dates": recent_dates([post["ts"] for post in posts]), "full": full, "whole": True}
         return blog
     if known and known.get("feed") and known.get("website") == website:
         # A blog found before can't be read today. It stays as it was, and is
@@ -900,13 +926,21 @@ def iso(ts):
     return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def timeline(blogs):
-    """Dates the posts and returns them all, newest first, each with its author."""
+def dated(blogs):
+    """Gives every post its date in the form the page reads. Returns the blogs."""
     for blog in blogs:
         for post in blog["posts"]:
             post["date"] = iso(post["ts"])
-    return sorted(({**post, "login": blog["login"], "name": blog["name"], "avatar": blog["avatar"]}
-                   for blog in blogs for post in blog["posts"]), key=lambda post: post["ts"], reverse=True)
+    return blogs
+
+
+def within_budget(blogs):
+    """Trims the oldest posts across all blogs once there are more than MAX_POSTS."""
+    every = sorted((post["ts"] for blog in blogs for post in blog["posts"]), reverse=True)
+    if len(every) > MAX_POSTS:
+        for blog in blogs:   # a blog always keeps its newest post
+            blog["posts"] = blog["posts"][:1] + [post for post in blog["posts"][1:] if post["ts"] >= every[MAX_POSTS - 1]]
+    return blogs
 
 
 def discover(people, taken, before):
@@ -924,7 +958,12 @@ def discover(people, taken, before):
     # Those followed by most of your follows first, then the widely followed.
     ranked = sorted(candidates.values(), key=lambda entry: (
         -len(entry["via"]), -entry["person"]["followers"]["totalCount"], entry["person"]["login"].lower()
-    ))[:DISCOVER_PEOPLE]
+    ))[:DISCOVER_LIMIT]
+    # Everyone an earlier run looked at costs little now (their verdict is
+    # remembered), so they all stay in; on top, a batch never seen before.
+    unseen = [entry for entry in ranked if entry["person"]["login"].lower() not in OLD]
+    batch = {id(entry) for entry in unseen[:DISCOVER_PEOPLE]}
+    ranked = [entry for entry in ranked if entry["person"]["login"].lower() in OLD or id(entry) in batch]
     with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
         found = list(pool.map(lambda entry: blog_of(entry["person"], full=False), ranked))
     blogs, year = [], time.time() - 365 * 86400
@@ -940,7 +979,8 @@ def discover(people, taken, before):
     # Most vouched-for first; the page orders the posts by date itself.
     blogs.sort(key=lambda blog: (-blog["via_count"], -blog["posts"][0]["ts"]))
     add_hacker_news(blogs)
-    return {"candidates": len(candidates), "looked_at": len(ranked), "blogs": blogs, "posts": timeline(blogs)}
+    return {"candidates": len(candidates), "looked_at": len(ranked), "waiting": len(unseen) - len(batch),
+            "blogs": dated(blogs)}
 
 
 def collect(cache, state):
@@ -976,8 +1016,7 @@ def collect(cache, state):
             "owner": {"login": owner["login"], "name": name, "avatar": owner["avatarUrl"], "url": owner["url"]},
             "title": os.environ.get("FOLLOWING_TITLE") or f"{name} is following",
             "following": total, "looked_at": len(people) - 1,
-            "blogs": blogs, "posts": timeline(blogs)[:MAX_POSTS],
-            "discover": found}
+            "blogs": dated(within_budget(blogs)), "discover": found}
 
 
 def write_page(output, result):
@@ -1021,11 +1060,11 @@ def main():
     if not args.no_page:
         write_page(output, result)
     print(f"following: {sum(not blog.get('self') for blog in result['blogs'])} blogs among {result['looked_at']} accounts, "
-          f"{len(result['posts'])} posts, updated {result['updated']}")
+          f"{sum(len(blog['posts']) for blog in result['blogs'])} posts, updated {result['updated']}")
     if result.get("discover"):
         found = result["discover"]
-        print(f"discover: {len(found['blogs'])} active blogs among the {found['looked_at']} most followed "
-              f"of {found['candidates']} second-degree accounts")
+        print(f"discover: {len(found['blogs'])} active blogs among the {found['looked_at']} second-degree accounts "
+              f"looked at so far, {found.get('waiting', 0)} of {found['candidates']} still to look at")
 
 
 if __name__ == "__main__":
