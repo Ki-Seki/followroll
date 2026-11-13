@@ -19,8 +19,12 @@ Writes following.json into the output folder, next to the page that displays
 it (the files in site/), and state.json, what this run learned about each
 account. The next run reads both back from the published site: someone known
 to have no blog is left alone for a month, a known feed is asked only whether
-it has changed, and older posts keep the counts they had. When GitHub can't be
-read, the previous list is reused, and so is a blog that is down during a run.
+it has changed, and older posts keep the counts they had.
+
+A run may add to the list and update it, but a request that fails never takes
+anything away: a blog that can't be read keeps its last entry (for two weeks),
+a count that can't be read keeps its last value, and Discover keeps its last
+list unless every following list behind it could be read.
 
 Usage: following.py [--output DIR] [--no-page]
 
@@ -202,16 +206,32 @@ def token():
 TOKEN = token()
 
 
+def graphql_reply(query, **variables):
+    """The whole reply ({"data": ..., "errors": ...}), or None when GitHub gave no usable answer.
+
+    Tried three times: these requests fail now and then for no lasting reason."""
+    body = json.dumps({"query": query, "variables": variables}).encode()
+    for pause in (0, 2, 6):
+        time.sleep(pause)
+        request = urllib.request.Request(API_URL, data=body, headers={
+            "Authorization": f"Bearer {TOKEN}", "User-Agent": USER_AGENT, "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                reply = json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            if error.code in (401, 404):   # a bad token or address will not get better
+                return None
+            continue
+        except Exception:
+            continue
+        if isinstance(reply, dict) and reply.get("data") is not None:
+            return reply
+    return None
+
+
 def graphql(query, **variables):
     """Returns the response's data, or None on any failure."""
-    body = json.dumps({"query": query, "variables": variables}).encode()
-    request = urllib.request.Request(API_URL, data=body, headers={
-        "Authorization": f"Bearer {TOKEN}", "User-Agent": USER_AGENT, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read()).get("data")
-    except Exception:
-        return None
+    return (graphql_reply(query, **variables) or {}).get("data")
 
 
 def whose_list():
@@ -228,22 +248,30 @@ LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 def friends_of(people, skip):
     """The accounts followed by `people` (first 100 each) that are not in `skip`.
 
-    Returns {login: {"person": account, "via": [who among `people` follows them]}}."""
-    found = {}
-    for start in range(0, len(people), 15):
-        batch = [person for person in people[start:start + 15] if LOGIN.match(person["login"])]
-        # One request for the whole batch: each account is an aliased field.
+    Returns (found, complete): found is {login: {"person": account, "via": [who
+    among `people` follows them]}}; complete is False when some following list
+    could not be read, in which case `found` must not replace an earlier one."""
+    found, complete = {}, True
+    for start in range(0, len(people), 5):
+        batch = [person for person in people[start:start + 5] if LOGIN.match(person["login"])]
+        # One request for the batch: each account is an aliased field.
         fields = " ".join(
             'u%d: user(login: "%s") { following(first: 100) { nodes { login name websiteUrl avatarUrl(size: 96) '
             'followers { totalCount } } } }' % (index, person["login"]) for index, person in enumerate(batch))
-        data = graphql("{ %s }" % fields) or {}
+        reply = graphql_reply("{ %s }" % fields)
+        data = (reply or {}).get("data") or {}
+        # An account that no longer exists is an answer; anything else missing is not.
+        deleted = {error["path"][0] for error in (reply or {}).get("errors") or []
+                   if error.get("type") == "NOT_FOUND" and error.get("path")}
+        if any(data.get(f"u{index}") is None and f"u{index}" not in deleted for index in range(len(batch))):
+            complete = False
         for index, person in enumerate(batch):
             for account in ((data.get(f"u{index}") or {}).get("following") or {}).get("nodes", []):
                 if account["login"].lower() in skip:
                     continue
                 entry = found.setdefault(account["login"], {"person": account, "via": []})
                 entry["via"].append({"login": person["login"], "name": person.get("name") or person["login"]})
-    return found
+    return found, complete
 
 
 def profile(login):
@@ -501,7 +529,10 @@ def thread_titles(comments, url, page, tags):
 
 
 def github_thread(repo, discussion, query=None, number=None):
-    """Comment and reaction counts of one Discussion or Issue, found by search or by number."""
+    """One Discussion or Issue, found by search or by number.
+
+    By number: the thread, or False when there is none. By search: the list of
+    matches. Either way None means GitHub gave no answer."""
     kind, typename = ("DISCUSSION", "Discussion") if discussion else ("ISSUE", "Issue")
     comments = "comments(first:100){totalCount nodes{replies{totalCount}}}" if discussion else "comments{totalCount}"
     fields = f"title url reactionGroups{{content reactors{{totalCount}}}} {comments}"
@@ -510,10 +541,10 @@ def github_thread(repo, discussion, query=None, number=None):
         field = "discussion" if discussion else "issue"
         data = graphql("query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){"
                        "%s(number:$number){%s}}}" % (field, fields), owner=owner, name=name, number=number)
-        return ((data or {}).get("repository") or {}).get(field)
+        return None if data is None else ((data.get("repository") or {}).get(field) or False)
     data = graphql("query($q:String!){search(type:%s,query:$q,first:5){nodes{... on %s{%s}}}}"
                    % (kind, typename, fields), q=f"repo:{repo} {query}")
-    return [node for node in ((data or {}).get("search") or {}).get("nodes", []) if node]
+    return None if data is None else [node for node in (data.get("search") or {}).get("nodes", []) if node]
 
 
 def counts_of(node, source):
@@ -526,21 +557,23 @@ def counts_of(node, source):
 
 
 def github_threads(posts, comments, first_page):
-    """Fills in post["thread"] for a blog whose comments are GitHub Discussions or Issues."""
+    """Updates post["thread"] for a blog whose comments are GitHub Discussions or Issues.
+
+    A post whose lookup gets no answer keeps the counts it had."""
     system, repo = comments["system"], comments["repo"]
     if "/" not in repo:
         return
     misses = 0
     for index, post in enumerate(posts):
-        node = None
+        node, answered = None, True
         if system == "gitalk":
             # gitalk opens an issue titled after the page, with its address in the body
             address = host(post["url"]) + urlparse(post["url"]).path
-            nodes = github_thread(repo, False, query=f'in:body "{address}"')
-            if not nodes:
-                nodes = [found for found in github_thread(repo, False, query=f'in:title "{phrase(post["title"])}"')
-                         if post["title"] in found.get("title", "")]
-            node = nodes[0] if nodes else None
+            found = github_thread(repo, False, query=f'in:body "{address}"')
+            if not found and found is not None:
+                found = github_thread(repo, False, query=f'in:title "{phrase(post["title"])}"')
+                found = found and [match for match in found if post["title"] in match.get("title", "")]
+            answered, node = found is not None, (found or [None])[0]
         else:
             # The page itself is needed when the name comes from it; otherwise
             # only while it is still unclear which name this blog uses.
@@ -555,22 +588,28 @@ def github_threads(posts, comments, first_page):
             # After a few posts with nothing under any name, stop trying them all.
             for kind, title in titles if misses < 3 else titles[:1]:
                 if kind == "number":
-                    node = github_thread(repo, system == "giscus", number=int(title)) if str(title).isdigit() else None
+                    found = github_thread(repo, system == "giscus", number=int(title)) if str(title).isdigit() else False
                 else:
                     found = github_thread(repo, system == "giscus", query=f'in:title "{phrase(title)}"')
-                    exact = [n for n in found if n.get("title", "").strip().rstrip("/") == title.strip().rstrip("/")]
-                    node = (exact or [None])[0]
-                if node:
+                    if found is not None:
+                        found = next((match for match in found
+                                      if match.get("title", "").strip().rstrip("/") == title.strip().rstrip("/")), False)
+                if found is None:
+                    answered = False
+                    break
+                if found:
+                    node = found
                     # The name that worked goes first from now on.
                     comments["mapping"], comments["settled"] = kind, True
                     break
-        if node and "comments" in node:
-            misses = 0
-            counts = counts_of(node, system)
-            if counts["comments"] or counts["likes"]:
-                post["thread"] = counts
+        if not answered:
+            continue
+        counts = counts_of(node, system) if node and "comments" in node else None
+        if counts and (counts["comments"] or counts["likes"]):
+            post["thread"] = counts
         else:
-            misses += 1
+            post.pop("thread", None)
+        misses = 0 if node else misses + 1
 
 
 def disqus_threads(posts, forum):
@@ -579,23 +618,29 @@ def disqus_threads(posts, forum):
     response = get(f"https://{forum}.disqus.com/count-data.js?{query}")
     match = re.search(r"displayCount\((\{.*\})\)", text_of(response[1]), re.S) if response else None
     try:
-        counts = {entry["id"]: entry["comments"] for entry in json.loads(match.group(1))["counts"]} if match else {}
-    except (ValueError, KeyError, TypeError):
-        counts = {}
+        counts = {entry["id"]: entry["comments"] for entry in json.loads(match.group(1))["counts"]}
+    except (AttributeError, ValueError, KeyError, TypeError):
+        return   # no answer: the posts keep what they had
     for post in posts:
         if counts.get(post["url"]):
             post["thread"] = {"source": "disqus", "url": post["url"] + "#disqus_thread",
                               "comments": counts[post["url"]], "likes": 0}
+        else:
+            post.pop("thread", None)
 
 
 def twikoo_threads(posts, server):
     """Comment counts from the blog's own Twikoo server, all posts in one request."""
     paths = {urlparse(post["url"]).path: post for post in posts}
     reply = post_json(server, {"event": "GET_COMMENTS_COUNT", "urls": list(paths), "includeReply": True})
-    for entry in (reply or {}).get("data") or []:
-        if isinstance(entry, dict) and entry.get("count") and entry.get("url") in paths:
-            paths[entry["url"]]["thread"] = {"source": "twikoo", "url": paths[entry["url"]]["url"],
-                                             "comments": entry["count"], "likes": 0}
+    if not isinstance(reply, dict) or not isinstance(reply.get("data"), list):
+        return   # no answer: the posts keep what they had
+    counts = {entry.get("url"): entry.get("count") for entry in reply["data"] if isinstance(entry, dict)}
+    for path, post in paths.items():
+        if counts.get(path):
+            post["thread"] = {"source": "twikoo", "url": post["url"], "comments": counts[path], "likes": 0}
+        else:
+            post.pop("thread", None)
 
 
 def read_threads(posts, comments, first_page):
@@ -705,6 +750,10 @@ BLOGS = {}           # login -> its blog entry in the previous list
 SEEN = set()         # addresses of the posts in the previous list
 
 
+KEEP_DOWN = 14 * 86400   # how long a blog that can't be read stays on the list
+FORGET = 90 * 86400      # how long an account not looked at stays remembered
+
+
 def patience(key, definite):
     """Seconds before an account without a blog is looked at again: about a
     month when the answer was definite, a few days when its site was just not
@@ -730,8 +779,6 @@ def refresh_counts(posts, comments, first_page=None):
     else:   # one request a post, so only new and recent ones
         recent = time.time() - 90 * 86400
         todo = [post for post in posts if post["url"] not in SEEN or post["ts"] > recent]
-    for post in todo:
-        post.pop("thread", None)
     if todo:
         read_threads(todo, comments, first_page if todo[0] is posts[0] else None)
 
@@ -751,7 +798,7 @@ def revisit(person, known, full):
                 "self": bool(person.get("self")), "months": months(known.get("dates") or [])}
         blog.pop("via", None), blog.pop("via_count", None)
         refresh_counts(blog["posts"], comments)
-        NEW[key] = {**known, "checked": int(time.time())}
+        NEW[key] = {**known, "checked": int(time.time()), "failing": None}
         return blog
     address, posts, _, validators = feed
     blog = new_blog(person, known["site"], address, posts)
@@ -769,7 +816,7 @@ def revisit(person, known, full):
             comments = comment_system(page, Tags(page), person["login"])
     refresh_counts(blog["posts"], comments, page)
     NEW[key] = {**known, "checked": int(time.time()), "feed": address, "validators": validators,
-                "comments": comments, "dates": [post["ts"] for post in posts], "full": full}
+                "comments": comments, "dates": [post["ts"] for post in posts], "full": full, "failing": None}
     return blog
 
 
@@ -785,7 +832,6 @@ def blog_of(person, full=True):
             blog = revisit(person, known, full)
             if blog:
                 return blog
-            NEW[key] = known   # not answering today: same again next time
         elif time.time() - known["checked"] < patience(key, known.get("definite", True)):
             NEW[key] = known
             return None
@@ -809,8 +855,19 @@ def blog_of(person, full=True):
                     "validators": validators, "comments": comments,
                     "dates": [post["ts"] for post in posts], "full": full}
         return blog
-    if not (known and known.get("feed")):   # a known blog that is down is not forgotten
-        NEW[key] = {"website": website, "checked": int(time.time()), "feed": None, "definite": answered}
+    if known and known.get("feed") and known.get("website") == website:
+        # A blog found before can't be read today. It stays as it was, and is
+        # tried again next time; only after two weeks of this is it let go.
+        since = known.get("failing") or int(time.time())
+        NEW[key] = {**known, "failing": since}
+        before = BLOGS.get(person["login"])
+        if before and time.time() - since < KEEP_DOWN:
+            kept = {**before, "name": person.get("name") or person["login"], "avatar": person.get("avatarUrl"),
+                    "self": bool(person.get("self"))}
+            kept.pop("via", None), kept.pop("via_count", None)
+            return kept
+        return None
+    NEW[key] = {"website": website, "checked": int(time.time()), "feed": None, "definite": answered}
     return None
 
 
@@ -852,13 +909,22 @@ def timeline(blogs):
                    for blog in blogs for post in blog["posts"]), key=lambda post: post["ts"], reverse=True)
 
 
-def discover(people, taken):
-    """Blogs one step further out: accounts followed by the people you follow."""
+def discover(people, taken, before):
+    """Blogs one step further out: accounts followed by the people you follow.
+
+    `before` is the previous run's Discover list, kept as it is when this run
+    could not read every following list: half the picture would rank
+    different people to the top and drop the rest."""
     known = {person["login"].lower() for person in people}
-    candidates = friends_of([person for person in people if not person.get("self")], known)
+    candidates, complete = friends_of([person for person in people if not person.get("self")], known)
+    if not complete and before:
+        print("discover: GitHub did not return every following list, keeping the previous Discover list",
+              file=sys.stderr)
+        return before
     # Those followed by most of your follows first, then the widely followed.
     ranked = sorted(candidates.values(), key=lambda entry: (
-        -len(entry["via"]), -entry["person"]["followers"]["totalCount"]))[:DISCOVER_PEOPLE]
+        -len(entry["via"]), -entry["person"]["followers"]["totalCount"], entry["person"]["login"].lower()
+    ))[:DISCOVER_PEOPLE]
     with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
         found = list(pool.map(lambda entry: blog_of(entry["person"], full=False), ranked))
     blogs, year = [], time.time() - 365 * 86400
@@ -894,24 +960,24 @@ def collect(cache, state):
     people = people + [{**owner, "self": True}]
     with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
         blogs = list(pool.map(blog_of, people))
-    # A blog that is down right now keeps its entry from the previous run.
-    known = {blog["login"]: blog for blog in (cache or {}).get("blogs", [])}
-    reachable = {person["login"] for person, blog in zip(people, blogs) if blog}
     blogs = [blog for blog in blogs if blog]
-    blogs += [blog for person in people if person["login"] not in reachable
-              and (blog := known.get(person["login"])) and get(blog["site"]) is None]
     # A host several accounts point at is an employer or a platform.
     hosts = collections.Counter(blog["host"] for blog in blogs)
     blogs = [blog for blog in blogs if hosts[blog["host"]] == 1 and blog["posts"]]
     blogs.sort(key=lambda blog: blog["posts"][0]["ts"], reverse=True)
     add_hacker_news(blogs)
     name = owner["name"] or owner["login"]
+    found = discover(people, set(hosts), (cache or {}).get("discover")) if DISCOVER_PEOPLE else None
+    # Accounts this run did not get to are not forgotten straight away.
+    for key, entry in OLD.items():
+        if key not in NEW and time.time() - entry.get("checked", 0) < FORGET:
+            NEW[key] = entry
     return {"updated": iso(time.time()),
             "owner": {"login": owner["login"], "name": name, "avatar": owner["avatarUrl"], "url": owner["url"]},
             "title": os.environ.get("FOLLOWING_TITLE") or f"{name} is following",
             "following": total, "looked_at": len(people) - 1,
             "blogs": blogs, "posts": timeline(blogs)[:MAX_POSTS],
-            "discover": discover(people, set(hosts)) if DISCOVER_PEOPLE else None}
+            "discover": found}
 
 
 def write_page(output, result):
