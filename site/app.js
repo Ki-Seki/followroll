@@ -33,7 +33,7 @@ const keep = {
 const data = JSON.parse(document.getElementById('data').textContent);
 const app = document.getElementById('app');
 const narrow = matchMedia('(max-width: 880px)');
-const state = { view: 'following', who: null, at: '', shown: PAGE, everyone: false, step: 0, went: false };
+const state = { view: 'following', who: null, shown: PAGE, everyone: false, step: 0, went: false };
 
 // ------------------------------------------------------------- words
 // Everything the page says, in English and in Chinese. A few entries carry
@@ -68,7 +68,7 @@ const WORDS = {
     turnOnDiscussions: 'Turn on Discussions', openSettings: 'Open its settings', showWhere: 'Show me where',
     closed: again => `Reposts are kept as discussions in your own followroll, and a new one has them switched off. In its settings on GitHub, tick <b>Discussions</b> under Features.${again ? ' Then press Repost again.' : ''}`,
     discussionsAlt: 'The Discussions box among the features in the settings of a repository',
-    missing: login => `There is no github.com/${login}/followroll yet. <a href="#${QUESTIONS[2]}">Make your own</a> first: it takes two minutes.`,
+    missing: login => `There is no github.com/${login}/followroll yet. <a href="#${ASK.make}">Make your own</a> first: it takes two minutes.`,
     about: 'About', aboutTitle: 'What this is, and how to make your own', home: 'Back to the start',
     keptHere: 'What you set here is kept in this browser only.',
     thisPage: 'What is this page?', whatDiscover: 'What is Discover?', make: 'How do I make my own?',
@@ -133,7 +133,7 @@ const WORDS = {
     turnOnDiscussions: '先打开 Discussions', openSettings: '打开它的设置', showWhere: '看看在哪里',
     closed: again => `转发会作为讨论保存在你自己的 followroll 里，而新建的 followroll 默认没有打开 Discussions。到 GitHub 上它的设置里，在 Features 下勾选 <b>Discussions</b>。${again ? '然后再点一次转发。' : ''}`,
     discussionsAlt: '仓库设置里 Features 下的 Discussions 选项',
-    missing: login => `还没有 github.com/${login}/followroll。先<a href="#${QUESTIONS[2]}">创建自己的页面</a>，两分钟就好。`,
+    missing: login => `还没有 github.com/${login}/followroll。先<a href="#${ASK.make}">创建自己的页面</a>，两分钟就好。`,
     about: '关于', aboutTitle: '这是什么，以及怎样创建自己的页面', home: '回到开头',
     keptHere: '这里的设置只保存在这个浏览器里。',
     thisPage: '这个页面是什么？', whatDiscover: '「发现」是什么？', make: '怎样创建我自己的页面？',
@@ -199,7 +199,6 @@ function wording(p) {
   return { title: on ? tr.title : p.title, summary: on ? tr.summary : p.summary, tr, on };
 }
 
-// "3h", "2d", "4mo", then the date: how long ago, as short as it can be said
 // One set of formatters a language: making one costs far more than using it
 const formats = {};
 const format = () => (formats[lang] ||= {
@@ -207,6 +206,7 @@ const format = () => (formats[lang] ||= {
   day: new Intl.DateTimeFormat(locale(), { year: 'numeric', month: 'short', day: 'numeric' }),
   exact: new Intl.DateTimeFormat(locale(), { dateStyle: 'medium', timeStyle: 'short' }),
 });
+// "3h", "2d", "4mo", then the date: how long ago, as short as it can be said
 function since(iso) {
   const d = age(iso);
   if (d < 3600) return t('short', Math.max(1, Math.round(d / 60)), 'm');
@@ -266,14 +266,15 @@ const ICON = {
 // ------------------------------------------------------------ what is known
 // The address keeps the view and the person: #discover, #by=login, #discover&by=login;
 // or one of the questions in About, which opens About at that question.
-const QUESTIONS = ['what-is-this-page', 'what-is-discover', 'how-do-i-make-my-own'];
+const ASK = { page: 'what-is-this-page', discover: 'what-is-discover', make: 'how-do-i-make-my-own' };
 function readHash() {
   const q = new URLSearchParams(location.hash.slice(1)), who = personOf(q.get('by'));
-  state.at = QUESTIONS.find(place => q.has(place)) || (q.has('setup') ? QUESTIONS[2] : '');   // #setup is where making one used to be
-  state.view = state.at ? 'about' : ['about', 'settings'].find(view => q.has(view)) || (q.has('discover') && data.discover ? 'discover' : 'following');
-  const lists = state.view === 'following' || state.view === 'discover';
-  state.who = who && lists ? who.login : null;
-  if (who && lists) state.view = who.view;   // a person is shown on the list they are on
+  const at = Object.values(ASK).find(place => q.has(place)) || (q.has('setup') ? ASK.make : '');   // #setup is where making one used to be
+  const page = at ? 'about' : ['about', 'settings'].find(view => q.has(view));
+  state.who = who && !page ? who.login : null;
+  // a person is shown on the list they are on
+  state.view = page || (state.who ? who.view : q.has('discover') && data.discover ? 'discover' : 'following');
+  return at;
 }
 function writeHash() {
   const parts = [state.view === 'following' ? '' : state.view, state.who ? `by=${encodeURIComponent(state.who)}` : ''].filter(Boolean);
@@ -292,8 +293,8 @@ for (const r of data.reposts || []) {
 const asItem = group => ({ reposts: group, ts: group[0].ts, date: group[0].date });
 // The posts on this page by address: they say more than a repost carries.
 const known = new Map();
-for (const of of [data.discover, data]) for (const b of of ? of.blogs : [])
-  for (const p of b.posts) known.set(key(p.url), { ...p, login: b.login, name: b.name, avatar: b.avatar });
+const everyBlog = [data.discover, data].flatMap(of => (of ? of.blogs : []));   // the owner's own list has the last word
+for (const b of everyBlog) for (const p of b.posts) known.set(key(p.url), { ...p, login: b.login, name: b.name, avatar: b.avatar });
 // People with a followroll page of their own: login -> its address. The
 // owner has one by definition: this page.
 const rolls = { ...data.rolls, [data.owner.login]: pageOf(data.owner.login) };
@@ -317,7 +318,7 @@ function toPerson(login) {
 // since can be marked. The mark stays for the whole of this visit.
 const SEEN = `followroll:seen:${data.owner.login.toLowerCase()}`;
 const lastSeen = Number(keep.get(SEEN)) || 0;
-const everyPost = [data, data.discover].flatMap(of => (of ? of.blogs : [])).flatMap(b => b.posts);
+const everyPost = everyBlog.flatMap(b => b.posts);
 const newest = everyPost.concat(data.reposts || []).reduce((latest, item) => Math.max(latest, item.ts), 0);
 const leave = () => keep.set(SEEN, String(newest));
 window.addEventListener('pagehide', leave);
@@ -402,7 +403,7 @@ function statsHTML(p) {
   const where = thread ? t('where')[thread.source] || t('where').github : '';
   if (thread && thread.likes) out.push(`<a class="stat" href="${link(thread.url)}" target="_blank" rel="noopener" title="${esc(t('likes', thread.likes, where))}">${ICON.heart}${thread.likes}</a>`);
   if (thread && thread.comments) out.push(`<a class="stat" href="${link(thread.url)}" target="_blank" rel="noopener" title="${esc(t('comments', thread.comments, where))}">${ICON.talk}${thread.comments}</a>`);
-  if (hn) out.push(`<a class="stat hn" href="${link(hn.url)}" target="_blank" rel="noopener" title="${esc(t('hn', hn.points, hn.comments))}"><i>Y</i>${hn.points}</a>`);
+  if (hn) out.push(`<a class="stat" href="${link(hn.url)}" target="_blank" rel="noopener" title="${esc(t('hn', hn.points, hn.comments))}"><i>Y</i>${hn.points}</a>`);
   return out.join('');
 }
 
@@ -574,8 +575,8 @@ function aboutHTML() {
   const step = (icon, big, label) => `<div class="step">${icon}<b>${big}</b><small>${label}</small></div>`;
   const then = `<i>${ICON.arrow}</i>`, flow = t('flow');
   return `<main class="wrap"><div class="about">
-<section id="${QUESTIONS[0]}">
-${askHTML(QUESTIONS[0], t('thisPage'))}
+<section id="${ASK.page}">
+${askHTML(ASK.page, t('thisPage'))}
 <p>${t('thisPageText', esc(owner.name))}</p>
 <div class="flow">
 ${step(ICON.github, data.following, flow[0])}${then}
@@ -585,8 +586,8 @@ ${step(ICON.mark, flow[3], flow[4])}
 </div>
 </section>
 
-${data.discover && data.discover.blogs.length ? `<section id="${QUESTIONS[1]}">
-${askHTML(QUESTIONS[1], t('whatDiscover'))}
+${data.discover && data.discover.blogs.length ? `<section id="${ASK.discover}">
+${askHTML(ASK.discover, t('whatDiscover'))}
 <p>${t('discoverText', esc(first))}</p>
 ${graphSVG()}
 </section>` : ''}
@@ -626,7 +627,7 @@ const sheetHTML = ({ about, title, text, shot, alt, size, go }) => `<small>${abo
 <p>${text}</p>
 ${shot ? `<img class="shot" src="setup/${shot}${isDark() ? '-dark' : ''}.webp" alt="${esc(alt)}" width="${size[0]}" height="${size[1]}">` : ''}
 <div class="go">${go}</div>`;
-const outside = (href, words, look = 'button') => `<a class="${look}" href="${href}" target="_blank" rel="noopener">${words}${look === 'button' ? ICON.out : ''}</a>`;
+const outside = (href, words, look = 'button') => (href ? `<a class="${look}" href="${href}" target="_blank" rel="noopener">${words}${look === 'button' ? ICON.out : ''}</a>` : '');
 // This copy's own repository on GitHub, where its owner sets it up and updates it
 const repoURL = () => (/^[\w.-]+\/[\w.-]+$/.test(data.repo || '') ? `https://github.com/${data.repo}` : '');
 
@@ -635,7 +636,7 @@ function updateHTML() {
   const latest = newer(), repo = repoURL();
   return sheetHTML({ about: `${t('version')} ${esc(data.version)}`, title: esc(t('update', latest.version)), text: t('howUpdate'),
     shot: 'update', alt: t('updateAlt'), size: [784, 676],
-    go: (repo ? outside(repo, t('openRepo')) : '') + outside(link(latest.url), esc(t('whatsNew', latest.version)), 'text') });
+    go: outside(repo, t('openRepo')) + outside(link(latest.url), esc(t('whatsNew', latest.version)), 'text') });
 }
 
 // How to have posts translated: a key, kept as a secret in the page's repository
@@ -643,7 +644,7 @@ function translationHTML() {
   const repo = repoURL();
   return sheetHTML({ about: t('translation'), title: t('setUpTranslation'), text: t('howTranslate'),
     shot: 'secret', alt: t('secretAlt'), size: [784, 592],
-    go: (repo ? outside(`${repo}/settings/secrets/actions/new`, t('openSecret')) : '') + outside('https://platform.deepseek.com/api_keys', t('getKey'), 'text') });
+    go: outside(repo && `${repo}/settings/secrets/actions/new`, t('openSecret')) + outside('https://platform.deepseek.com/api_keys', t('getKey'), 'text') });
 }
 
 // Where to turn Discussions on, for the followroll of whoever is reposting;
@@ -651,7 +652,7 @@ function translationHTML() {
 function discussionsHTML(login, again) {
   return sheetHTML({ about: t('repost'), title: t('turnOnDiscussions'), text: t('closed', again),
     shot: 'discussions', alt: t('discussionsAlt'), size: [784, 400],
-    go: login ? outside(`${rollRepo(login)}/settings#discussions-feature`, t('openSettings')) : '' });
+    go: outside(login && `${rollRepo(login)}/settings#discussions-feature`, t('openSettings')) });
 }
 
 // What takes a few words and a picture is said in a sheet over the page when
@@ -693,8 +694,8 @@ function makeHTML() {
       go: `<span>${openHTML()}</span><button class="button${state.went ? '' : ' ghost'}" type="button" data-do="next">${n === steps.length - 1 ? t('done') : t('next')}</button>${back}` })
     : `${sheetHTML({ about: t('allDone', steps.length), title: t('thatsIt'), text: t('built'), go: `<span>${openHTML()}</span>${back}` })}
 <p class="small">${t('alsoDiscussions')} <button class="text" type="button" data-do="discussions">${t('showWhere')}</button></p>`}</section>`;
-  return `<section class="wizard" id="${QUESTIONS[2]}">
-${askHTML(QUESTIONS[2], t('make'))}
+  return `<section class="wizard" id="${ASK.make}">
+${askHTML(ASK.make, t('make'))}
 <p>${t('setupLead')}</p>
 <label class="you">${t('yourName')}<input name="me" value="${esc(me())}" placeholder="${esc(t('namePh'))}" aria-label="${esc(t('yourName'))}" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
 <div class="dots">${dots}</div>
@@ -739,14 +740,25 @@ ${state.view === 'about' ? aboutHTML() : state.view === 'settings' ? settingsHTM
 }
 
 // An address that names a place within a view opens the view there
-const settle = () => { if (state.at) document.getElementById(state.at)?.scrollIntoView({ block: 'start' }); };
+const settle = at => { if (at) document.getElementById(at)?.scrollIntoView({ block: 'start' }); };
 
-// Renders again where the reader is
-function refresh() {
-  const top = window.scrollY, along = app.querySelector('.people')?.scrollLeft || 0;
+// Renders again with the row of faces where it was
+function rerender() {
+  const along = app.querySelector('.people')?.scrollLeft || 0;
   render();
   const row = app.querySelector('.people');
   if (row) { row.scrollLeft = along; edges(); }
+}
+// The top of a list, brought back into view if it has been scrolled past
+function rewind() {
+  const body = app.querySelector('.cols');
+  if (body.getBoundingClientRect().top < 0) body.scrollIntoView({ block: 'start' });
+}
+
+// Renders again where the reader is
+function refresh() {
+  const top = window.scrollY;
+  rerender();
   window.scrollTo(0, top);
 }
 
@@ -801,8 +813,8 @@ app.addEventListener('submit', async e => {
   form.insertAdjacentHTML('beforeend', `<div class="hint">${t('missing', esc(login))}</div>`);
 });
 
-// The username typed on the setup page is kept as it is typed, and the
-// button for the step follows it.
+// The username typed above the steps is kept as it is typed, and the button
+// for the step follows it.
 app.addEventListener('input', e => {
   if (!e.target.matches('.you input')) return;
   const login = e.target.value.trim();
@@ -856,11 +868,8 @@ app.addEventListener('click', e => {
   if (e.target.closest('.wizard')) return remake();   // a press in the steps draws the steps again
   if (!tab && !pick) return refresh();   // anything else that is not a move keeps the reader's place
   writeHash();   // a new person or tab starts at the top
-  const along = app.querySelector('.people')?.scrollLeft || 0;
-  render();
-  const row = app.querySelector('.people'), body = app.querySelector('.cols, .about');
-  if (row) { row.scrollLeft = along; edges(); }   // the row of faces stays where it was
-  if (body.getBoundingClientRect().top < 0) body.scrollIntoView({ block: 'start' });
+  rerender();
+  rewind();
 });
 
 // With a mouse, the row of faces is pulled along by hand, the way a finger
@@ -894,19 +903,17 @@ narrow.addEventListener('change', render);
 dusk.addEventListener('change', remake);   // their pictures come in both
 window.addEventListener('resize', edges);
 window.addEventListener('hashchange', () => {
-  const was = state.view, who = state.who;
-  readHash();
+  const was = state.view, who = state.who, at = readHash();
   state.shown = PAGE;
   // From one question to another, About stays as it is: only the place changes
-  if (state.view === 'about' && was === 'about') return state.at ? settle() : window.scrollTo(0, 0);
+  if (state.view === 'about' && was === 'about') return at ? settle(at) : window.scrollTo(0, 0);
   render();
-  const body = app.querySelector('.cols, .about');
   if (state.view !== was) window.scrollTo(0, 0);   // followroll's own pages and the lists are different pages
-  else if (state.who !== who && body.getBoundingClientRect().top < 0) body.scrollIntoView({ block: 'start' });
-  settle();
+  else if (state.who !== who) rewind();
+  settle(at);
 });
 
 applyTheme();
-readHash();
+const opened = readHash();
 render();
-settle();
+settle(opened);

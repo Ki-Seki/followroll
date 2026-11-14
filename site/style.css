@@ -186,7 +186,7 @@ b { font-weight: 600; }
 
 /* ----------------------------------------------- about followroll */
 /* A few questions, each answered in a sentence or two and one picture */
-.about { max-width: 640px; padding-bottom: 96px; scroll-margin-top: var(--bar); }
+.about { max-width: 640px; padding-bottom: 96px; }
 .about > section { margin-top: 64px; scroll-margin-top: calc(var(--bar) + 28px); }
 .about > section:first-child { margin-top: 60px; }
 .about h2, .pop h3 { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.015em; }
@@ -294,13 +294,13 @@ noscript .empty { padding: 20vh 24px; }
   .tabs { align-self: auto; height: 42px; }
   .about > .title { margin-top: 36px; }
   .cols { grid-template-columns: minmax(0, 1fr); padding-bottom: 56px; scroll-margin-top: 0; }
-  .about { padding-bottom: 64px; scroll-margin-top: 0; }
+  .about { padding-bottom: 64px; }
   .about > section { margin-top: 48px; scroll-margin-top: 24px; }
   .about > section:first-child { margin-top: 36px; }
   /* People become a row of faces above the posts; the greener the ring,
      the more recently that person posted. */
   .side { position: static; order: -1; max-height: none; overflow: visible; margin: 0; padding: 14px 0 0; }
-  .months, .id b, .id .logo, .all, .side .updated { display: none; }
+  .months, .id b, .id .logo, .side .updated { display: none; }
   .feed .updated { display: block; margin-top: 32px; }
   .people-wrap { position: relative; }
   .people { flex-direction: row; gap: 2px; margin: 0 -16px; padding: 3px 12px 12px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }

@@ -495,11 +495,10 @@ def comment_system(page, tags, login):
         src = script.get("src", "")
         if "giscus.app" in src and script.get("data-repo"):
             return {"system": "giscus", "repo": script["data-repo"],
-                    "mapping": script.get("data-mapping", "pathname"), "term": script.get("data-term")}
+                    "mapping": script.get("data-mapping", "pathname")}
         if "utteranc.es" in src and script.get("repo"):
             mapping = script.get("issue-term") or ("number" if script.get("issue-number") else "pathname")
-            return {"system": "utterances", "repo": script["repo"], "mapping": mapping,
-                    "term": script.get("issue-number")}
+            return {"system": "utterances", "repo": script["repo"], "mapping": mapping}
     if "giscus" in page.lower():
         around = near(page, "giscus")
         repo = setting(around, "repo")
@@ -507,14 +506,12 @@ def comment_system(page, tags, login):
         # most often stores comments in the blog's own repository.
         repo = repo if repo and "/" in repo else pages_repo_with_discussions(login)
         if repo:
-            return {"system": "giscus", "repo": repo, "mapping": setting(around, "mapping") or "pathname",
-                    "term": setting(around, "term")}
+            return {"system": "giscus", "repo": repo, "mapping": setting(around, "mapping") or "pathname"}
     if "utteranc" in page.lower():
         around = near(page, "utteranc")
         repo = setting(around, "repo")
         if repo and "/" in repo:
-            return {"system": "utterances", "repo": repo, "mapping": setting(around, "issue-term") or "pathname",
-                    "term": None}
+            return {"system": "utterances", "repo": repo, "mapping": setting(around, "issue-term") or "pathname"}
     match = re.search(r"new Gitalk\(\{(.{0,1500})", page, re.S)
     if match:
         repo, owner = setting(match.group(1), "repo"), setting(match.group(1), "owner")
@@ -832,7 +829,7 @@ def patience(key, definite):
     return ((30 + spread % 10) if definite else (2 + spread % 3)) * 86400
 
 
-def new_blog(person, site, feed, posts, earlier=()):
+def new_blog(person, site, feed, posts, earlier):
     """A blog's entry: the posts in its feed now, then the older ones seen on earlier runs.
 
     Within the stretch of time the feed covers, the feed is the truth: a post
@@ -865,11 +862,16 @@ def shown_on_discover(posts):
     return [post for post in posts if post["ts"] > year][:DISCOVER_POSTS]
 
 
+def counted(posts, full):
+    """The posts whose counts are worth reading: a page of them, or just what Discover shows."""
+    return posts[:COUNTED_POSTS] if full else shown_on_discover(posts)
+
+
 def refresh_counts(posts, comments, first_page=None, full=True):
     """Reads comment and like counts again where they may have moved."""
     if not comments:
         return
-    newest = posts[:COUNTED_POSTS] if full else shown_on_discover(posts)
+    newest = counted(posts, full)
     if comments["system"] in ("disqus", "twikoo"):   # one request covers them all
         todo = newest
     else:   # one request a post, so only new and recent ones
@@ -881,11 +883,11 @@ def refresh_counts(posts, comments, first_page=None, full=True):
 
 def counts_again(person, blog, comments, full):
     """Reads the counts of a blog looked at before, where they may have moved. Returns its comment system."""
-    counted = blog["posts"] if full else shown_on_discover(blog["posts"])
+    newest = counted(blog["posts"], full)[:1]
     page = None
-    if counted and counted[0]["url"] not in SEEN:
+    if newest and newest[0]["url"] not in SEEN:
         # A new post: a chance to notice comments the blog has added since.
-        response = get(counted[0]["url"])
+        response = get(newest[0]["url"])
         page = text_of(response[1]) if response else None
         if page and not comments:
             comments = comment_system(page, Tags(page), person["login"])
@@ -898,12 +900,11 @@ def revisit(person, known, full):
     key = person["login"].lower()
     before = BLOGS.get(person["login"])
     # "Has it changed?" is only worth asking when the answer saves work. It
-    # does when the old entry can be reused: it must hold as many posts as
-    # asked for, and have been built from the whole feed rather than its first
-    # few posts, as earlier versions did. And it does for a blog that had
-    # nothing recent enough for Discover to show: unchanged, it still has not.
+    # does when the old entry can be reused, which it can when it holds as
+    # many posts as asked for. And it does for a blog that had nothing recent
+    # enough for Discover to show: unchanged, it still has not.
     dormant = not before and not full and not shown_on_discover([{"ts": ts} for ts in known.get("dates") or []])
-    reusable = (before or dormant) and (known.get("full") or not full) and known.get("whole")
+    reusable = (before or dormant) and (known.get("full") or not full)
     feed = read_feed(known["feed"], known.get("validators") if reusable else None)
     if feed is None:
         return None
@@ -922,7 +923,7 @@ def revisit(person, known, full):
     blog = new_blog(person, known["site"], address, posts, (before or {}).get("posts", []))
     comments = counts_again(person, blog, comments, full)
     NEW[key] = {**known, "checked": int(time.time()), "feed": address, "validators": validators,
-                "comments": comments, "full": full, "whole": True, "failing": None,
+                "comments": comments, "full": full, "failing": None,
                 "dates": recent_dates(known.get("dates") or [], [post["ts"] for post in posts])}
     return blog
 
@@ -965,22 +966,22 @@ def blog_of(person, full=True):
         # A blog known before keeps the older posts it has built up.
         same = known and known.get("feed") == feed
         blog = new_blog(person, site, feed, posts, (BLOGS.get(person["login"]) or {}).get("posts", []) if same else ())
-        counted = blog["posts"][:COUNTED_POSTS] if full else shown_on_discover(blog["posts"])
+        shown = counted(blog["posts"], full)
         if same:
             comments = counts_again(person, blog, known.get("comments"), full)
-        elif counted:
+        elif shown:
             # The newest post's page tells where the blog's comments live.
             response = get(blog["posts"][0]["url"])
             page = text_of(response[1]) if response else None
             comments = comment_system(page, Tags(page), person["login"]) if page else None
             if comments:
-                read_threads(counted, comments, page)
+                read_threads(shown, comments, page)
         else:
             comments = None
         NEW[key] = {"website": website, "checked": int(time.time()), "site": site, "feed": feed,
                     "validators": validators, "comments": comments, "rules": RULES,
                     "dates": recent_dates((known.get("dates") or []) if same else [], [post["ts"] for post in posts]),
-                    "full": full, "whole": True}
+                    "full": full}
         return blog
     if known and known.get("feed") and known.get("website") == website and not not_theirs:
         # A blog found before can't be read today. It stays as it was, and is
@@ -1094,8 +1095,8 @@ def reposts_of(owner, followed, cache):
     every followed person's own followroll page, by login."""
     mine = own_reposts(owner["login"])
     if mine is None:   # no answer: the ones known before stay
-        mine = [entry for entry in (cache or {}).get("reposts", []) if entry["by"]["login"] == owner["login"]]
-    me = {"login": owner["login"], "name": owner["name"] or owner["login"], "avatar": owner["avatarUrl"], "page": None}
+        mine = [entry for entry in cache.get("reposts", []) if entry["by"]["login"] == owner["login"]]
+    me = {"login": owner["login"], "name": owner["name"] or owner["login"], "avatar": owner["avatarUrl"]}
     reposts, pages = [{**entry, "by": me} for entry in mine], {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
         rolls = list(pool.map(roll_of, followed))
@@ -1105,7 +1106,7 @@ def reposts_of(owner, followed, cache):
         if roll and roll.get("page"):
             pages[person["login"]] = roll["page"]
             by = {"login": person["login"], "name": person.get("name") or person["login"],
-                  "avatar": person.get("avatarUrl"), "page": roll["page"]}
+                  "avatar": person.get("avatarUrl")}
             reposts += [{**entry, "by": by} for entry in roll.get("reposts") or []]
     reposts.sort(key=lambda entry: entry["ts"], reverse=True)
     for entry in reposts:
@@ -1151,7 +1152,6 @@ TRANSLATE_BATCH_CHARS = 5000   # and characters, so that what comes back fits in
 TRANSLATE_WORKERS = 4          # requests at a time
 TRANSLATE_TIMEOUT = 90         # seconds to wait for one answer
 TRANSLATE_SECONDS = 300        # no request starts after this long: what is left waits for the next run
-PROMPT_VERSION = 1       # goes up when the prompt changes, so that everything is translated again
 LANGUAGES = {"zh": "Simplified Chinese", "en": "English"}
 PROMPT = """You translate the titles and summaries of blog posts for a reading list into {language}.
 
@@ -1165,13 +1165,9 @@ class Refused(Exception):
 def target_language(text):
     """Chinese text goes into English and everything else into Chinese; None when there is nothing to translate."""
     han, words = len(re.findall(r"[\u4e00-\u9fff]", text)), len(re.findall(r"[A-Za-z]+", text))
-    if not han and not words:
-        return "zh" if re.search(r"[^\W\d_]", text) else None   # another script altogether
-    return "en" if han > words else "zh"
-
-
-def translation_key(lang, title, summary):
-    return hashlib.sha256(json.dumps([PROMPT_VERSION, lang, title, summary]).encode()).hexdigest()[:20]
+    if han > words:
+        return "en"
+    return "zh" if re.search(r"[^\W\d_]", text) else None   # any letters at all, in whatever script
 
 
 def words(post):
@@ -1186,7 +1182,7 @@ def known_translations():
         for post in blog["posts"]:
             tr = post.get("tr")
             if isinstance(tr, dict) and tr.get("lang") in LANGUAGES and tr.get("title"):
-                known[translation_key(tr["lang"], *words(post))] = tr
+                known[tr["lang"], *words(post)] = tr
     return known
 
 
@@ -1237,7 +1233,7 @@ def translate(blogs):
             lang = target_language(f"{title}\n{summary}")
             if not lang:
                 continue
-            key = translation_key(lang, title, summary)
+            key = (lang, title, summary)
             if key in known:
                 post["tr"], reused = known[key], reused + 1
             else:
@@ -1363,11 +1359,11 @@ def discover(people, taken, before):
     ranked = [entry for entry in ranked if entry["person"]["login"].lower() in OLD or id(entry) in batch]
     with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
         found = list(pool.map(lambda entry: blog_of(entry["person"], full=False), ranked))
-    blogs, year = [], time.time() - 365 * 86400
+    blogs = []
     for entry, blog in zip(ranked, found):
         if not blog or blog["host"] in taken:
             continue
-        blog["posts"] = [post for post in blog["posts"] if post["ts"] > year][:DISCOVER_POSTS]
+        blog["posts"] = shown_on_discover(blog["posts"])
         if blog["posts"]:
             blog["via"], blog["via_count"] = entry["via"][:3], len(entry["via"])
             blogs.append(blog)
@@ -1385,11 +1381,12 @@ def collect(cache, state):
     login = whose_list() if TOKEN else None
     if not login:
         return None
+    cache = cache or {}
     owner = profile(login)
     people, total = following(login)
     if owner is None or people is None:
         return None
-    before = (cache or {}).get("blogs", []) + ((cache or {}).get("discover") or {}).get("blogs", [])
+    before = cache.get("blogs", []) + (cache.get("discover") or {}).get("blogs", [])
     OLD.update((state or {}).get("people") or {})
     OLD_ROLLS.update((state or {}).get("rolls") or {})
     BLOGS.update({blog["login"]: blog for blog in before})
@@ -1405,9 +1402,9 @@ def collect(cache, state):
     blogs.sort(key=lambda blog: blog["posts"][0]["ts"], reverse=True)
     add_hacker_news(blogs)
     name = owner["name"] or owner["login"]
-    found = discover(people, set(hosts), (cache or {}).get("discover")) if DISCOVER_PEOPLE else None
+    found = discover(people, set(hosts), cache.get("discover")) if DISCOVER_PEOPLE else None
     reposts, pages = reposts_of(owner, people[:-1], cache)
-    latest = latest_release() or (cache or {}).get("latest")   # no answer: the last one known
+    latest = latest_release() or cache.get("latest")   # no answer: the last one known
     # Accounts this run did not get to are not forgotten straight away.
     for key, entry in OLD.items():
         if key not in NEW and time.time() - entry.get("checked", 0) < FORGET:
