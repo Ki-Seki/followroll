@@ -8,9 +8,13 @@ on:
   push:
     branches:
       - main
+  # A repost is a discussion in this repository, so the page is rebuilt when
+  # one is started, changed or deleted.
+  discussion:
 
 permissions:
   contents: read
+  discussions: read
   pages: write
   id-token: write
   # Lets the last step keep this schedule from being switched off
@@ -22,6 +26,8 @@ concurrency:
 
 jobs:
   build:
+    # Anyone can start a discussion here; only the owner's own start a run.
+    if: github.event_name != 'discussion' || contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.discussion.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

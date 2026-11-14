@@ -1,184 +1,306 @@
+/* One system for the whole page. Ink on paper and one typeface in three
+   weights; hairlines rather than boxes; 8px corners on whatever can be
+   pressed. Two colours only: the greens of a GitHub contribution graph, which
+   stand for how much someone writes and are followroll's own mark, and
+   Hacker News's orange on the one figure that comes from there. */
 :root {
   --bg: #ffffff; --panel: #fafafa; --hover: #f4f4f5;
-  --fg: #18181b; --mute: #71717a; --faint: #8e8e96; --line: #e4e4e7;
-  /* Activity, in the greens of GitHub's contribution graph */
-  --m0: #ebedf0; --m1: #9be9a8; --m2: #40c463; --m3: #30a14e; --m4: #216e39;
+  --fg: #111113; --mute: #5d5d66; --faint: #8b8b94; --line: #ebebed;
+  --g0: #ebedf0; --g1: #9be9a8; --g2: #40c463; --g3: #30a14e; --g4: #216e39;
+  --accent: #1f883d; --hn: #ff6600;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
   --ease: cubic-bezier(.2, .7, .2, 1);
+  --bar: 56px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #09090b; --panel: #111113; --hover: #18181b;
-    --fg: #f4f4f5; --mute: #a1a1aa; --faint: #63636b; --line: #27272a;
-    --m0: #1c1c20; --m1: #0e4429; --m2: #006d32; --m3: #26a641; --m4: #39d353;
+    --bg: #0b0b0c; --panel: #111113; --hover: #18181b;
+    --fg: #ededee; --mute: #a1a1a9; --faint: #6f6f78; --line: #222225;
+    --g0: #1b1b1f; --g1: #0e4429; --g2: #006d32; --g3: #26a641; --g4: #39d353;
+    --accent: #3fb950;
   }
+  img { outline-color: rgb(255 255 255 / .08); }
 }
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 var(--font); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/24px var(--font); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 a { color: inherit; text-decoration: none; }
-button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
-img { display: block; border-radius: 50%; background: var(--hover); }
+button, input { font: inherit; color: inherit; }
+button { background: none; border: 0; padding: 0; cursor: pointer; }
+/* A hairline inside every face, so a pale one keeps its edge on a pale page */
+img { display: block; border-radius: 50%; background: var(--hover); outline: 1px solid rgb(0 0 0 / .06); outline-offset: -1px; }
 svg { width: 14px; height: 14px; flex: none; }
 h1, h2, h3, p { margin: 0; }
-:focus-visible { outline: 2px solid var(--m3); outline-offset: 2px; border-radius: 6px; }
+b { font-weight: 600; }
+::selection { background: color-mix(in srgb, var(--fg) 14%, transparent); }
+:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; border-radius: 6px; }
+/* Something new: a post since the last visit, a release since this copy */
+.new { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
 .wrap { max-width: 1048px; margin: 0 auto; padding: 0 24px; }
 
-/* ----------------------------------------------------------- header */
-.head { display: flex; align-items: center; gap: 14px; padding: 28px 0 18px; }
-.owner img { transition: transform .2s var(--ease); }
-.owner:hover img { transform: scale(1.06); }
-.head h1 { font-size: 20px; line-height: 1.3; font-weight: 650; letter-spacing: -.015em; }
-.head h1 a:hover { text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 4px; }
-
+/* -------------------------------------------------------------- bar */
+/* Whose page this is and its two lists; at the far end, followroll itself */
 .bar { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
-.bar .wrap { display: flex; align-items: center; height: 41px; }
-.tabs { display: flex; gap: 24px; align-self: stretch; margin-bottom: -1px; }
-.tabs button { display: inline-flex; align-items: center; gap: 7px; padding: 0 1px; border-bottom: 2px solid transparent; color: var(--mute); font-size: 14px; font-weight: 500; transition: color .15s; }
+@supports (backdrop-filter: blur(1px)) {
+  .bar { background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: saturate(180%) blur(16px); }
+}
+.bar .wrap { display: flex; align-items: center; gap: 36px; height: var(--bar); }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand h1 { overflow: hidden; font-size: 15px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; text-overflow: ellipsis; }
+.tabs { display: flex; gap: 24px; align-self: stretch; }
+.tabs button { display: inline-flex; align-items: center; gap: 6px; margin-bottom: -1px; border-bottom: 1.5px solid transparent; color: var(--mute); font-size: 14px; font-weight: 500; transition: color .15s; }
 .tabs button:hover { color: var(--fg); }
-.tabs button.on { color: var(--fg); border-color: var(--fg); font-weight: 600; }
-.tabs span { min-width: 22px; padding: 0 6px; border-radius: 999px; background: var(--hover); color: var(--mute); font-size: 12px; font-weight: 500; line-height: 20px; text-align: center; font-variant-numeric: tabular-nums; }
+.tabs button.on { border-color: var(--fg); color: var(--fg); }
+.tabs span { color: var(--faint); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.mark { position: relative; display: inline-flex; align-items: center; gap: 7px; margin-left: auto; color: var(--mute); font-size: 14px; font-weight: 600; letter-spacing: -.01em; transition: color .15s; }
+.mark:hover, .mark.on { color: var(--fg); }
+.mark .logo { width: 16px; height: 16px; }
+.mark .new { position: absolute; top: 0; right: -9px; }
 
 /* ---------------------------------------------------------- columns */
-.cols { display: grid; grid-template-columns: minmax(0, 1fr) 352px; gap: 56px; align-items: start; padding-top: 4px; padding-bottom: 72px; scroll-margin-top: 41px; }
+.cols { display: grid; grid-template-columns: minmax(0, 620px) 280px; justify-content: space-between; align-items: start; padding-bottom: 96px; scroll-margin-top: var(--bar); }
 
-.feed h2 { font-size: 13px; font-weight: 600; color: var(--mute); margin: 28px 0 6px; }
-.post { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 14px; padding: 14px 12px; margin: 0 -12px; border-radius: 12px; transition: background .15s; }
-.post:hover { background: var(--hover); }
-.post > img { margin-top: 2px; }
-.meta { display: flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--mute); white-space: nowrap; min-width: 0; }
-.meta a { position: relative; z-index: 1; color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
-.meta a:hover { text-decoration: underline; text-underline-offset: 3px; }
-.meta span { overflow: hidden; text-overflow: ellipsis; }
-.meta span::before, .meta time::before { content: "·"; margin-right: 6px; color: var(--faint); }
-.post h3 { font-size: 16.5px; line-height: 1.4; font-weight: 600; letter-spacing: -.01em; margin-top: 3px; overflow-wrap: anywhere; }
+/* A stretch of time, named quietly */
+.feed > h2 { margin-top: 44px; padding-bottom: 6px; color: var(--faint); font-size: 13px; font-weight: 500; line-height: 20px; }
+.feed > h2:first-child { margin-top: 30px; }
+
+/* A post: who and when on one line, then its words, then what was made of it */
+.post { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 14px; padding: 18px 0; border-top: 1px solid var(--line); }
+.post.solo { grid-template-columns: minmax(0, 1fr); }
+.av { position: relative; z-index: 1; align-self: start; margin-top: 2px; border-radius: 50%; }
+.by { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--faint); font-size: 13px; line-height: 20px; white-space: nowrap; }
+.who { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; color: var(--fg); font-size: 14px; font-weight: 500; text-overflow: ellipsis; }
+.who img { flex: none; }
+.who:hover, .by b a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; text-decoration-color: var(--faint); }
+.who + time::before, .by b + time::before, .why::before { content: "·"; margin-right: 8px; }
+.why { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.post h3 { margin-top: 4px; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -.012em; overflow-wrap: anywhere; text-wrap: balance; }
 /* The whole row opens the post; a title already read goes quiet. */
-.post h3 a::after { content: ""; position: absolute; inset: 0; border-radius: 12px; }
-.post h3 a:visited { color: var(--mute); }
-.post p { margin-top: 4px; color: var(--mute); font-size: 14px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; text-wrap: pretty; }
-.extras { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 8px; }
-.via { color: var(--mute); font-size: 12.5px; }
-.stat { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; color: var(--mute); font-size: 12.5px; font-variant-numeric: tabular-nums; transition: color .15s; }
+.post h3 a::after { content: ""; position: absolute; inset: 0; }
+.post:hover h3 a { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; text-decoration-color: var(--faint); }
+.post h3 a:visited { color: color-mix(in srgb, var(--fg) 58%, var(--bg)); }
+.post p { display: -webkit-box; overflow: hidden; margin-top: 4px; color: var(--mute); font-size: 15px; line-height: 23px; overflow-wrap: anywhere; text-wrap: pretty; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.info { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 16px; margin: 8px 0 -4px; color: var(--faint); font-size: 13px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.stat { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; transition: color .15s; }
 .stat:hover { color: var(--fg); }
-.stat i { width: 14px; height: 14px; border-radius: 3px; background: #ff6600; color: #fff; font: 700 10px/14px var(--font); text-align: center; }
+/* Hacker News, in its own colour */
+.stat i { width: 14px; height: 14px; border-radius: 3px; background: var(--hn); color: #fff; font: 700 10px/14px var(--font); text-align: center; }
+/* Repost: the one thing to do with a post, always in the same place */
+.rp { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; height: 28px; margin-left: -6px; padding: 0 6px; border-radius: 6px; transition: color .15s, background .15s; }
+.rp:hover { background: var(--hover); color: var(--fg); }
+.rp.on { color: var(--accent); }
+/* Who reposted, then what: the post itself stands back behind a rule */
+.repost .by b { min-width: 0; overflow: hidden; color: var(--mute); font-weight: 400; text-overflow: ellipsis; }
+.repost .by b a { position: relative; z-index: 1; color: var(--fg); font-size: 14px; font-weight: 500; }
+.post p.note { margin-top: 4px; color: var(--fg); -webkit-line-clamp: 4; }
+.quote { margin-top: 10px; padding-left: 14px; border-left: 2px solid var(--line); }
+.quote h3 { font-size: 16px; }
+/* Writing a repost: one line, in place */
+.as { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.as input { height: 34px; min-width: 0; padding: 0 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); font-size: 14px; transition: border-color .15s; }
+.as input::placeholder, .you input::placeholder { color: var(--faint); }
+.as input:focus, .you input:focus { outline: 0; border-color: var(--fg); }
+.as input[name=me] { flex: 0 1 168px; }
+.as input[name=note] { flex: 1 1 200px; }
+.as button { height: 34px; padding: 0 14px; border-radius: 8px; background: var(--fg); color: var(--bg); font-size: 13px; font-weight: 500; transition: opacity .15s; }
+.as button:hover { opacity: .86; }
+.as button:disabled { opacity: .5; }
+.as .hint { flex-basis: 100%; color: var(--mute); font-size: 13px; line-height: 20px; }
+.as .hint a, .text { color: var(--fg); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; text-decoration-color: var(--faint); }
 
-.more, .all { height: 40px; border: 1px solid var(--line); border-radius: 10px; color: var(--mute); font-size: 13.5px; font-weight: 500; transition: background .15s, color .15s; }
-.more { display: block; width: 100%; margin-top: 16px; }
+.more, .all { display: block; width: 100%; height: 38px; margin-top: 20px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); color: var(--mute); font-size: 13px; font-weight: 500; transition: background .15s, color .15s; }
 .more:hover, .all:hover { background: var(--hover); color: var(--fg); }
-.empty { color: var(--mute); text-align: center; padding: 64px 0; }
+.empty { padding: 72px 0; color: var(--mute); text-align: center; }
+.updated { color: var(--faint); font-size: 12px; line-height: 16px; }
+.feed .updated { display: none; }
+
+/* One person's posts start with who they are and where else to find them */
+.profile { display: flex; align-items: center; gap: 16px; padding: 36px 0 2px; }
+.profile h2 { font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -.018em; }
+.outs { display: flex; flex-wrap: wrap; gap: 2px 16px; margin-top: 4px; }
+.outs a { display: inline-flex; align-items: center; gap: 6px; color: var(--mute); font-size: 13px; line-height: 20px; transition: color .15s; }
+.outs a:hover { color: var(--fg); }
+.outs svg:not(.logo) { color: var(--faint); }
+.profile p { margin-top: 2px; color: var(--faint); font-size: 13px; line-height: 20px; }
 
 /* ------------------------------------------------------------ people */
-.side { position: sticky; top: 41px; max-height: calc(100vh - 41px); overflow: hidden auto; margin: 0 -10px; padding: 28px 10px 24px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
-.side-head { display: flex; align-items: baseline; gap: 7px; margin-bottom: 8px; font-size: 13px; }
-.side-head h2 { font-size: 13px; font-weight: 600; }
-.side-head span { color: var(--mute); font-variant-numeric: tabular-nums; }
-/* The key to the month squares, above them */
-.side-head .key { margin-left: auto; margin-right: 40px; font-size: 12px; }
-.people { display: flex; flex-direction: column; margin: 0 -10px; }
-.person { display: flex; align-items: center; border-radius: 10px; transition: background .15s; }
-.person:hover { background: var(--hover); }
-.person.on { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); }
-.pick { flex: 1; min-width: 0; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 8px 4px 8px 10px; border-radius: 10px; text-align: left; }
-.gh { flex: none; width: 32px; height: 32px; margin-right: 4px; display: grid; place-items: center; border-radius: 8px; color: var(--faint); transition: color .15s, background .15s; }
-.gh:hover { color: var(--fg); background: var(--line); }
-.gh svg { width: 15px; height: 15px; }
+.side { position: sticky; top: var(--bar); max-height: calc(100vh - var(--bar)); overflow: hidden auto; margin: 0 -8px; padding: 30px 8px 24px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.side-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 8px; color: var(--faint); font-size: 13px; line-height: 20px; }
+.side-head h2 { font-size: 13px; font-weight: 500; }
+.side-head span { font-variant-numeric: tabular-nums; }
+.side-head .key { margin-left: auto; font-size: 12px; }
+.people { display: flex; flex-direction: column; margin: 0 -8px; }
+.pick { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border-radius: 8px; text-align: left; transition: background .12s; }
+.pick:hover, .person.on .pick { background: var(--hover); }
 .face { display: block; border-radius: 50%; }
-.id { min-width: 0; line-height: 1.35; }
-.id b, .id small { display: block; overflow-wrap: anywhere; }
-.id b { font-size: 14px; font-weight: 600; }
+.id { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.id b { overflow: hidden; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap; text-overflow: ellipsis; }
+.person.on .id b { font-weight: 600; }
+.id .logo { width: 10px; height: 10px; }   /* has a followroll */
 .id em { display: none; font-style: normal; }
-.id small { font-size: 12.5px; color: var(--mute); }
 .months { display: grid; grid-template-columns: repeat(12, 6px); gap: 2px; }
-.months i { width: 6px; height: 6px; border-radius: 1.5px; background: var(--m0); }
-.months .m1 { background: var(--m1); } .months .m2 { background: var(--m2); }
-.months .m3 { background: var(--m3); } .months .m4 { background: var(--m4); }
-.all { display: block; width: 100%; margin-top: 10px; height: 36px; font-size: 13px; }
+.months i { width: 6px; height: 6px; border-radius: 1.5px; background: var(--g0); }
+.months .m1 { background: var(--g1); } .months .m2 { background: var(--g2); }
+.months .m3 { background: var(--g3); } .months .m4 { background: var(--g4); }
+.all { height: 34px; margin-top: 10px; }
+.side .updated { margin: 20px 0 0; }
+.nudge { display: none; }
 
-/* ------------------------------------------------------------ about */
-.about { max-width: 680px; padding: 4px 0 80px; scroll-margin-top: 41px; }
-.about h2 { font-size: 18px; font-weight: 650; letter-spacing: -.012em; margin: 48px 0 10px; }
-.about p { margin-top: 10px; text-wrap: pretty; }
-.about b { font-weight: 600; }
+/* ----------------------------------------------- about followroll */
+.about { max-width: 640px; min-height: calc(100vh - var(--bar)); padding-bottom: 96px; scroll-margin-top: var(--bar); }
+.hero { padding-top: 60px; }
+.about .hero h2 { display: flex; align-items: center; gap: 12px; margin: 0; font-size: 28px; line-height: 36px; font-weight: 600; letter-spacing: -.022em; }
+.hero .logo { width: 26px; height: 26px; }
+.about .hero p { margin-top: 8px; color: var(--mute); font-size: 17px; line-height: 26px; }
+.about h2 { margin: 56px 0 8px; font-size: 15px; line-height: 24px; font-weight: 600; }
+.about p { margin-top: 8px; text-wrap: pretty; }
+.about .small { color: var(--mute); font-size: 13px; line-height: 20px; }
+.go { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 22px; }
+.go span { display: contents; }
+.button { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border-radius: 8px; background: var(--fg); color: var(--bg); font-size: 14px; font-weight: 500; transition: opacity .15s, background .15s; }
+.button:hover { opacity: .86; }
+.button.ghost { background: none; box-shadow: inset 0 0 0 1px var(--line); color: var(--fg); }
+.button.ghost:hover { background: var(--hover); opacity: 1; }
 
-/* The page in four steps, with this page's own numbers */
-.flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; align-items: center; gap: 8px; margin: 18px 0 16px; }
-.step { display: grid; gap: 3px; align-content: start; height: 100%; padding: 14px 14px 13px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
-.step svg { width: 17px; height: 17px; color: var(--mute); margin-bottom: 9px; }
-.step b { font-size: 22px; font-weight: 650; line-height: 1.15; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-.step small { color: var(--mute); font-size: 12.5px; line-height: 1.4; }
+/* The page in a few steps, with this page's own numbers */
+.flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; align-items: center; gap: 8px; margin-top: 18px; }
+.step { display: grid; gap: 2px; align-content: start; height: 100%; padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
+.step svg { width: 16px; height: 16px; margin-bottom: 10px; color: var(--faint); }
+.step b { font-size: 20px; line-height: 26px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.step small { color: var(--mute); font-size: 12px; line-height: 17px; }
 .flow > i { color: var(--faint); }
-.notes { margin: 0; padding: 0 0 0 20px; color: var(--mute); font-size: 14px; }
-.notes li { padding: 3px 0 3px 4px; }
-.notes li::marker { color: var(--faint); }
+.flow.three { grid-template-columns: 1fr auto 1fr auto 1fr; }
+.flow.three b { font-size: 15px; line-height: 22px; letter-spacing: -.01em; }
+/* The steps arrive one after another, in the order they happen */
+@keyframes arrive { from { opacity: 0; transform: translateY(6px); } }
+.flow > * { animation: arrive .5s var(--ease) backwards; }
+.flow > :nth-child(2) { animation-delay: .15s; } .flow > :nth-child(3) { animation-delay: .3s; }
+.flow > :nth-child(4) { animation-delay: .45s; } .flow > :nth-child(5) { animation-delay: .6s; }
+.flow > :nth-child(6) { animation-delay: .75s; } .flow > :nth-child(7) { animation-delay: .9s; }
 
 /* Who follows whom */
-.graph { margin: 18px 0 0; padding: 18px 20px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.graph { margin: 18px 0 0; padding: 18px 20px 14px; border: 1px solid var(--line); border-radius: 12px; }
 .graph svg { width: 100%; height: auto; overflow: visible; }
 .graph path { fill: none; stroke: var(--line); stroke-width: 1.5; }
-.graph path.strong { stroke: var(--m3); }
-.graph .rim { fill: var(--panel); }
-.graph text { fill: var(--fg); font-size: 13px; font-weight: 600; }
-.graph text.dim { fill: var(--mute); font-size: 12px; font-weight: 400; }
+.graph path.strong { stroke: var(--g3); }
+/* The links are drawn outwards from the owner */
+@keyframes draw { from { stroke-dashoffset: 1; } }
+.graph path { stroke-dasharray: 1; animation: draw .7s var(--ease) .2s backwards; }
+.graph path.later { animation-delay: .8s; }
+.graph .rim { fill: var(--bg); }
+.graph text { fill: var(--fg); font-size: 13px; font-weight: 500; }
+.graph text.dim { fill: var(--faint); font-size: 12px; font-weight: 400; }
 
-/* What the small figures on a post mean */
-.legend { display: grid; grid-template-columns: max-content minmax(0, 1fr); margin: 12px 0 0; border-top: 1px solid var(--line); }
-.legend dt, .legend dd { margin: 0; padding: 12px 0; border-bottom: 1px solid var(--line); }
-.legend dt { display: flex; align-items: center; gap: 14px; padding-right: 28px; }
-.legend dd { color: var(--mute); font-size: 14px; }
+/* What the small figures mean, and the few things that can be set: the same table */
+.legend { display: grid; grid-template-columns: max-content minmax(0, 1fr); margin: 14px 0 0; border-top: 1px solid var(--line); }
+.legend dt, .legend dd { min-height: 46px; margin: 0; padding: 11px 0; border-bottom: 1px solid var(--line); color: var(--mute); font-size: 14px; }
+.legend dt { display: flex; align-items: center; gap: 14px; padding-right: 36px; color: var(--faint); font-size: 13px; }
+.prefs dt { color: var(--mute); font-size: 14px; }
+.prefs dd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.prefs .how { flex-basis: 100%; font-size: 13px; line-height: 20px; }
+.prefs .fresh { display: inline-flex; align-items: center; gap: 7px; color: var(--fg); }
+.seg { display: inline-flex; margin: -3px 0; padding: 2px; border-radius: 8px; background: var(--hover); }
+.seg button { height: 26px; padding: 0 11px; border-radius: 6px; color: var(--mute); font-size: 13px; font-weight: 500; transition: color .15s; }
+.seg button:hover { color: var(--fg); }
+.seg .on { background: var(--bg); box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgb(0 0 0 / .05); color: var(--fg); }
 
-.steps { margin: 14px 0 20px; padding: 0; list-style: none; counter-reset: step; }
-.steps li { position: relative; padding: 7px 0 7px 38px; counter-increment: step; }
-.steps li::before { content: counter(step); position: absolute; left: 0; top: 6px; width: 24px; height: 24px; border-radius: 50%; background: var(--hover); color: var(--mute); font-size: 12.5px; font-weight: 600; line-height: 24px; text-align: center; }
-.button { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 999px; background: var(--fg); color: var(--bg); font-size: 14px; font-weight: 600; transition: opacity .15s; }
-.button:hover { opacity: .86; }
-.button svg { width: 16px; height: 16px; }
-.quiet { margin-left: 20px; color: var(--mute); font-size: 13.5px; }
-.quiet:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
-
-/* ----------------------------------------------------------- footer */
-.foot { border-top: 1px solid var(--line); color: var(--mute); font-size: 13px; }
-.foot .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 24px; padding-top: 22px; padding-bottom: 40px; }
-.foot a { color: var(--fg); margin-left: 18px; }
-.foot span:first-child a, .foot a:first-child { margin-left: 0; }
-.foot a:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* Setting one up: a page of its own, one step on screen at a time */
+.backlink { display: inline-flex; align-items: center; gap: 4px; margin: 36px 0 0 -3px; color: var(--mute); font-size: 13px; line-height: 20px; transition: color .15s; }
+.backlink:hover { color: var(--fg); }
+.backlink svg { transform: scaleX(-1); }
+.wizard > h2 { margin: 6px 0 0; font-size: 28px; line-height: 36px; letter-spacing: -.022em; }
+.wizard > p { color: var(--mute); font-size: 17px; line-height: 26px; }
+.you { display: flex; align-items: center; gap: 12px; margin-top: 30px; color: var(--mute); font-size: 14px; }
+.you input { width: 200px; height: 36px; padding: 0 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); transition: border-color .15s; }
+.dots { display: flex; align-items: center; margin: 28px 0 16px; }
+.dots button { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--line); color: var(--mute); font-size: 12px; font-weight: 500; transition: background .15s, color .15s; }
+.dots button:hover { background: var(--hover); color: var(--fg); }
+.dots .done { box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent); }
+.dots .on, .dots .on:hover { background: var(--fg); box-shadow: none; color: var(--bg); }
+.dots i { flex: 1; height: 1px; background: var(--line); }
+/* The picture sits beside the words, never wider than half its pixels, so it stays sharp */
+.card { display: grid; grid-template-columns: minmax(0, 1fr) 380px; column-gap: 28px; align-items: start; padding: 24px; border: 1px solid var(--line); border-radius: 14px; animation: arrive .35s var(--ease) backwards; }
+.card:not(:has(picture)) { grid-template-columns: minmax(0, 1fr); }   /* nothing to show beside the words */
+.card > * { grid-column: 1; }
+.card picture { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+.card .go, .card .small { grid-column: 1 / -1; }
+.card small { color: var(--faint); font-size: 12px; line-height: 16px; }
+.card h3 { margin-top: 4px; font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.015em; }
+.about .card p { margin-top: 4px; color: var(--mute); }
+.card img { width: 100%; max-width: 389px; height: auto; border: 1px solid var(--line); border-radius: 8px; background: none; outline: 0; }
+.about .card .small { margin-top: 16px; }
+.card .small a { color: var(--fg); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; text-decoration-color: var(--faint); }
+.back { margin-left: auto; color: var(--mute); font-size: 13px; transition: color .15s; }
+.back:hover { color: var(--fg); }
 noscript .empty { padding: 20vh 24px; }
 
 /* ----------------------------------------------------------- narrow */
 @media (max-width: 880px) {
   .wrap { padding: 0 16px; }
-  .head { padding: 20px 0 16px; }
-  .head h1 { font-size: 18px; }
-  .cols { grid-template-columns: minmax(0, 1fr); gap: 0; padding-bottom: 48px; }
-  /* People become a row of faces above the posts; the ring shows how
-     recently each one posted. */
-  .side { position: static; order: -1; max-height: none; overflow: visible; margin: 0; padding: 16px 0 0; }
-  .side-head, .months, .id small, .id b, .all { display: none; }
-  .meta span { display: none; }   /* the site's address gives way to the name */
-  /* Under a face there is room for a first name only */
-  .id em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--mute); }
-  .person.on .id em { color: var(--fg); font-weight: 600; }
-  .people { flex-direction: row; gap: 2px; margin: 0 -16px; padding: 2px 12px 12px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+  /* The bar takes two lines and stays at the top of the page */
+  .bar { position: static; background: var(--bg); backdrop-filter: none; }
+  .bar .wrap { flex-wrap: wrap; gap: 0 20px; height: auto; }
+  .brand, .mark { margin: 16px 0 4px; }
+  .brand { flex: 1 1 0; }
+  .brand h1 { font-size: 17px; }
+  .tabs { order: 1; flex: 1 0 100%; align-self: auto; height: 42px; }   /* under the name and the mark */
+  .cols { grid-template-columns: minmax(0, 1fr); padding-bottom: 56px; scroll-margin-top: 0; }
+  .about { min-height: 0; padding-bottom: 64px; scroll-margin-top: 0; }
+  /* People become a row of faces above the posts; the greener the ring,
+     the more recently that person posted. */
+  .side { position: static; order: -1; max-height: none; overflow: visible; margin: 0; padding: 14px 0 0; }
+  .side-head, .months, .id b, .id .logo, .all, .side .updated { display: none; }
+  .feed .updated { display: block; margin-top: 32px; }
+  .people-wrap { position: relative; }
+  .people { flex-direction: row; gap: 2px; margin: 0 -16px; padding: 3px 12px 12px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
   .people::-webkit-scrollbar { display: none; }
-  .person, .person:hover, .person.on { flex: none; background: none; box-shadow: none; }
-  .pick { display: flex; flex-direction: column; gap: 6px; width: 66px; padding: 6px 0 4px; }
-  .gh { display: none; }
-  .face { padding: 2px; border: 2px solid var(--m0); }
+  .person { flex: none; }
+  .pick, .pick:hover, .person.on .pick { display: flex; flex-direction: column; gap: 6px; width: 64px; padding: 4px 0; background: none; }
+  .pick:focus-visible { outline: 0; }
+  .face { padding: 3px; box-shadow: inset 0 0 0 2px var(--g0); transition: box-shadow .15s; }
   .face img { width: 40px; height: 40px; }
-  .heat1 .face { border-color: var(--m1); } .heat2 .face { border-color: var(--m2); }
-  .heat3 .face { border-color: var(--m3); } .heat4 .face { border-color: var(--m4); }
-  .person.on .face { border-color: var(--fg); }
-  .id { width: 62px; text-align: center; }
-  .feed h2 { margin-top: 22px; }
-  .about h2 { margin-top: 38px; }
+  .heat1 .face { box-shadow: inset 0 0 0 2px var(--g1); } .heat2 .face { box-shadow: inset 0 0 0 2px var(--g2); }
+  .heat3 .face { box-shadow: inset 0 0 0 2px var(--g3); } .heat4 .face { box-shadow: inset 0 0 0 2px var(--g4); }
+  .person.on .face, .pick:focus-visible .face { box-shadow: inset 0 0 0 2px var(--fg); }
+  /* Under a face there is room for a first name only */
+  .id { display: block; width: 60px; text-align: center; }
+  .id em { display: block; overflow: hidden; color: var(--mute); font-size: 12px; line-height: 16px; white-space: nowrap; text-overflow: ellipsis; }
+  .person.on .id em { color: var(--fg); font-weight: 600; }
+  /* With a mouse the row is pulled along by hand, and two buttons show
+     there is more of it; a finger needs neither. */
+  @media (hover: hover) and (pointer: fine) {
+    .people { cursor: grab; user-select: none; -webkit-user-select: none; }
+    .people .pick { cursor: inherit; }
+    .people.pulling { cursor: grabbing; }
+    .nudge { position: absolute; top: 0; bottom: 13px; z-index: 2; display: flex; align-items: center; justify-content: flex-end; width: 56px; background: linear-gradient(90deg, transparent, var(--bg) 62%); color: var(--mute); opacity: 0; pointer-events: none; transition: opacity .15s, color .15s; }
+    .nudge svg { width: 28px; height: 28px; padding: 7px; border-radius: 50%; background: var(--bg); box-shadow: 0 0 0 1px var(--line), 0 2px 8px rgb(0 0 0 / .08); }
+    .nudge:hover { color: var(--fg); }
+    .nudge.prev { left: -16px; transform: scaleX(-1); }
+    .nudge.next { right: -16px; }
+    .more-left .prev, .more-right .next { opacity: 1; pointer-events: auto; }
+  }
+  .feed > h2 { margin-top: 32px; }
+  .feed > h2:first-child { margin-top: 20px; }
+  .post { grid-template-columns: 32px minmax(0, 1fr); column-gap: 12px; padding: 16px 0; }
+  .av img { width: 32px; height: 32px; }
+  .profile { padding-top: 24px; }
+  .profile > img { width: 48px; height: 48px; }
+  .hero { padding-top: 36px; }
+  .about h2 { margin-top: 44px; }
+  .backlink { margin-top: 24px; }
+  .wizard > h2 { margin-top: 6px; }
   .flow { grid-template-columns: 1fr 1fr; }
+  .flow.three { grid-template-columns: 1fr; }
   .flow > i { display: none; }
   .graph { padding: 14px 10px 12px; }
-  .legend { grid-template-columns: minmax(0, 1fr); }
-  .legend dt { padding-bottom: 0; border-bottom: 0; }
-  .legend dd { padding-top: 6px; }
+  .legend:not(.prefs) { grid-template-columns: minmax(0, 1fr); }
+  .legend:not(.prefs) dt { min-height: 0; padding-bottom: 0; border-bottom: 0; }
+  .legend:not(.prefs) dd { min-height: 0; padding-top: 6px; }
   .legend .wide { display: none; }   /* the month squares are not shown at this width */
-  .quiet { display: block; margin: 14px 0 0; }
+  .prefs dt { padding-right: 20px; }
+  .card { grid-template-columns: minmax(0, 1fr); padding: 18px; }
+  .card picture { grid-column: 1; grid-row: auto; margin-top: 16px; }
 }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

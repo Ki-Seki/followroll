@@ -20,10 +20,19 @@ blog's feed, so each blog's history builds up; and every run looks at another
 batch of second-degree accounts it has not seen, until all of them are covered.
 
 Writes following.json into the output folder, next to the page that displays
-it (the files in site/), and state.json, what this run learned about each
+it (the files in site/), reposts.json, and state.json, what this run learned about each
 account. The next run reads both back from the published site: someone known
 to have no blog is left alone for a month, a known feed is asked only whether
 it has changed, and older posts keep the counts they had.
+
+A repost is an open discussion the owner started in their own copy of this
+repository (the page's repost button fills it in). The run publishes them as
+reposts.json, and reads the same file from the page of every followed person
+who has one, at https://<login>.github.io/followroll/. That fixed address is
+why the repository has to keep its name.
+
+Each copy knows its own version (VERSION below) and asks which release of
+followroll is the latest, so the page can say when it is time to sync the fork.
 
 A run may add to the list and update it, but a request that fails never takes
 anything away: a blog that can't be read keeps its last entry (for two weeks),
@@ -36,7 +45,7 @@ Environment (an empty value counts as unset):
   GITHUB_TOKEN / GH_TOKEN   token for the GitHub API; `gh auth token` is tried next
   FOLLOWING_LOGIN           whose following list to read (default: the repository
                             owner on GitHub Actions, else the token's own account)
-  FOLLOWING_TITLE           page title (default: "<name> is following")
+  FOLLOWING_TITLE           what the page is called (default: the owner's name)
   FOLLOWING_PREVIOUS_URL    where the previous run's following.json is published
                             (default: this repository's GitHub Pages address)
   FOLLOWING_MAX_PEOPLE      most followed accounts to look at, newest first (default: 500)
@@ -70,8 +79,10 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
 HERE = Path(__file__).resolve().parent
+VERSION = "1.1.0"                 # goes up with every release
+UPSTREAM = "Ki-Seki/followroll"   # where the releases are published
 API_URL = "https://api.github.com/graphql"
-USER_AGENT = "Mozilla/5.0 (compatible; followroll/1.0; +https://github.com/Ki-Seki/followroll)"
+USER_AGENT = f"Mozilla/5.0 (compatible; followroll/{VERSION}; +https://github.com/{UPSTREAM})"
 TIMEOUT = 12
 MAX_BYTES = 3_000_000
 MAX_PEOPLE = int(os.environ.get("FOLLOWING_MAX_PEOPLE") or 500)
@@ -82,6 +93,8 @@ DISCOVER_POSTS = 3      # posts kept per blog on the Discover list, none older t
 MAX_POSTS = 1500        # posts kept in all; the oldest go first
 COUNTED_POSTS = 20      # newest posts of a blog whose comment counts are read
 DISCOVER_LIMIT = 2000   # second-degree accounts considered at all, best-ranked first
+REPO = "followroll"     # every copy of this repository keeps this name, so pages can find each other
+REPOSTS = 100           # newest reposts kept per person
 
 # A profile link to an account on someone else's platform is not a blog.
 NOT_A_BLOG = (
@@ -155,6 +168,7 @@ def plain(markup, limit=200):
     """HTML to one line of text, cut at `limit` characters."""
     markup = re.sub(r"<(script|style)\b.*?</\1>", " ", markup or "", flags=re.S | re.I)
     text = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", markup))).strip()
+    text = re.sub(r" ([,.;:!?])", r"\1", text)   # a tag before punctuation leaves a space there
     return text[:limit].rstrip() + ("…" if len(text) > limit else "")
 
 
@@ -897,17 +911,152 @@ def blog_of(person, full=True):
     return None
 
 
+# ------------------------------------------------------------- reposts
+
+MARK = re.compile(r"<!--\s*followroll\s+(\{.*?\})\s*-->", re.S)
+WRITERS = ("OWNER", "MEMBER", "COLLABORATOR")   # whose discussions are the repository's own
+OLD_ROLLS, NEW_ROLLS = {}, {}   # login (lower case) -> what is known about their followroll page
+
+
+def roll_address(login):
+    """Where `login`'s own followroll page is, if they have one."""
+    return f"https://{login.lower()}.github.io/{REPO}/"
+
+
+def short(value, limit):
+    return re.sub(r"\s+", " ", value).strip()[:limit] if isinstance(value, str) else ""
+
+
+def repost(entry):
+    """A repost with just the fields the page uses, or None if it names no post.
+
+    `entry` may come from someone else's page, so nothing in it is taken on trust."""
+    if not isinstance(entry, dict):
+        return None
+    url, when = short(entry.get("url"), 500), entry.get("ts")
+    if not url.startswith(("http://", "https://")) or not isinstance(when, (int, float)):
+        return None
+    login, source = short(entry.get("login"), 40), short(entry.get("source"), 300)
+    return {"url": url, "title": short(entry.get("title"), 300) or url, "author": short(entry.get("author"), 100),
+            "login": login if LOGIN.match(login) else "", "note": short(entry.get("note"), 500),
+            "ts": int(when), "source": source if source.startswith("https://github.com/") else ""}
+
+
+def own_reposts(login):
+    """What the owner reposted, newest first, or None when GitHub gave no answer.
+
+    A repost is an open discussion in this repository, started by someone who
+    can push to it, that carries a `<!-- followroll {...} -->` line naming the
+    post. Whatever else it says is the note. Deleting or closing it takes the
+    repost back."""
+    owner, _, name = (os.environ.get("GITHUB_REPOSITORY") or f"{login}/{REPO}").partition("/")
+    data = graphql("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
+                   "discussions(first:100,states:[OPEN],orderBy:{field:CREATED_AT,direction:DESC}){"
+                   "nodes{title body url createdAt authorAssociation}}}}", owner=owner, name=name)
+    if data is None:
+        return None
+    found = []
+    for thread in ((data.get("repository") or {}).get("discussions") or {}).get("nodes") or []:
+        match = MARK.search(thread.get("body") or "")
+        if not match or thread.get("authorAssociation") not in WRITERS:
+            continue
+        try:
+            about = json.loads(match.group(1))
+        except ValueError:
+            continue
+        if not isinstance(about, dict):
+            continue
+        note = plain(re.sub(r"<!--.*?-->", " ", thread["body"], flags=re.S), 500)
+        entry = repost({**about, "title": thread.get("title"), "note": note,
+                        "ts": timestamp(thread.get("createdAt")), "source": thread.get("url")})
+        if entry:
+            found.append(entry)
+    return found[:REPOSTS]
+
+
+def roll_of(person):
+    """What is known about a followed person's own followroll page: its address
+    and what they reposted there. None when there was no answer and nothing is
+    known from before."""
+    key, now = person["login"].lower(), int(time.time())
+    known = OLD_ROLLS.get(key)
+    # Someone without a page is asked again after a few days, spread out by name.
+    if known and not known.get("page") and now - known["checked"] < (3 + zlib.crc32(key.encode()) % 4) * 86400:
+        return known
+    status, final, body, validators = fetch(roll_address(key) + "reposts.json", (known or {}).get("validators"))
+    if status == "same":
+        return {**known, "checked": now}
+    if status == "ok":
+        try:
+            theirs = json.loads(body)
+        except ValueError:
+            theirs = None
+        if isinstance(theirs, dict) and isinstance(theirs.get("reposts"), list) and final.startswith("https://"):
+            entries = [entry for entry in map(repost, theirs["reposts"][:REPOSTS]) if entry]
+            return {"checked": now, "page": final.rsplit("/", 1)[0] + "/", "validators": validators, "reposts": entries}
+        status = "gone"   # something else lives at that address
+    if status == "gone":
+        return {"checked": now, "page": None}
+    return known   # no answer today: what was known stays
+
+
+def reposts_of(owner, followed, cache):
+    """Returns (reposts, pages): the owner's reposts and those of the people
+    they follow, newest first, each with who it is `by`; and the address of
+    every followed person's own followroll page, by login."""
+    mine = own_reposts(owner["login"])
+    if mine is None:   # no answer: the ones known before stay
+        mine = [entry for entry in (cache or {}).get("reposts", []) if entry["by"]["login"] == owner["login"]]
+    me = {"login": owner["login"], "name": owner["name"] or owner["login"], "avatar": owner["avatarUrl"], "page": None}
+    reposts, pages = [{**entry, "by": me} for entry in mine], {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        rolls = list(pool.map(roll_of, followed))
+    for person, roll in zip(followed, rolls):
+        if roll:
+            NEW_ROLLS[person["login"].lower()] = roll
+        if roll and roll.get("page"):
+            pages[person["login"]] = roll["page"]
+            by = {"login": person["login"], "name": person.get("name") or person["login"],
+                  "avatar": person.get("avatarUrl"), "page": roll["page"]}
+            reposts += [{**entry, "by": by} for entry in roll.get("reposts") or []]
+    reposts.sort(key=lambda entry: entry["ts"], reverse=True)
+    for entry in reposts:
+        entry["date"] = iso(entry["ts"])
+    return reposts[:MAX_POSTS], pages
+
+
+# ------------------------------------------------------------ releases
+
+RELEASE = re.compile(r"^v?(\d+(?:\.\d+){0,2})$")
+
+
+def latest_release():
+    """The newest release of followroll, {"version": "1.2.0", "url": its notes}, or None when unknown."""
+    request = urllib.request.Request(f"https://api.github.com/repos/{UPSTREAM}/releases/latest", headers={
+        "Authorization": f"Bearer {TOKEN}", "User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            release = json.loads(response.read(MAX_BYTES))
+    except Exception:
+        return None
+    match = RELEASE.match(str(release.get("tag_name") or "")) if isinstance(release, dict) else None
+    url = str(release.get("html_url") or "") if match else ""
+    return {"version": match.group(1), "url": url} if url.startswith("https://github.com/") else None
+
+
+def is_newer(version, than):
+    numbers = lambda text: [int(part) for part in text.split(".")] + [0, 0]
+    return numbers(version)[:3] > numbers(than)[:3]
+
+
 # ---------------------------------------------------------------- main
 
 def previous_url(name):
     """Where the last run published a file: this repository's Pages site."""
     if os.environ.get("FOLLOWING_PREVIOUS_URL"):
         return os.environ["FOLLOWING_PREVIOUS_URL"].rsplit("/", 1)[0] + "/" + name
-    owner, _, repo = os.environ.get("GITHUB_REPOSITORY", "").partition("/")
-    if not repo:
-        return None
-    base = f"https://{owner.lower()}.github.io/"
-    return base + ("" if repo.lower() == f"{owner.lower()}.github.io" else repo + "/") + name
+    owner = os.environ.get("GITHUB_REPOSITORY", "").partition("/")[0]
+    return roll_address(owner) + name if owner else None
 
 
 def load_previous(output, name):
@@ -994,6 +1143,7 @@ def collect(cache, state):
         return None
     before = (cache or {}).get("blogs", []) + ((cache or {}).get("discover") or {}).get("blogs", [])
     OLD.update((state or {}).get("people") or {})
+    OLD_ROLLS.update((state or {}).get("rolls") or {})
     BLOGS.update({blog["login"]: blog for blog in before})
     SEEN.update(post["url"] for blog in before for post in blog["posts"])
     # The owner's own blog is part of their timeline too.
@@ -1008,22 +1158,25 @@ def collect(cache, state):
     add_hacker_news(blogs)
     name = owner["name"] or owner["login"]
     found = discover(people, set(hosts), (cache or {}).get("discover")) if DISCOVER_PEOPLE else None
+    reposts, pages = reposts_of(owner, people[:-1], cache)
+    latest = latest_release() or (cache or {}).get("latest")   # no answer: the last one known
     # Accounts this run did not get to are not forgotten straight away.
     for key, entry in OLD.items():
         if key not in NEW and time.time() - entry.get("checked", 0) < FORGET:
             NEW[key] = entry
     return {"updated": iso(time.time()),
             "owner": {"login": owner["login"], "name": name, "avatar": owner["avatarUrl"], "url": owner["url"]},
-            "title": os.environ.get("FOLLOWING_TITLE") or f"{name} is following",
+            "title": os.environ.get("FOLLOWING_TITLE") or name,
             "following": total, "looked_at": len(people) - 1,
-            "blogs": dated(within_budget(blogs)), "discover": found}
+            "blogs": dated(within_budget(blogs)), "discover": found, "reposts": reposts, "rolls": pages,
+            "latest": latest}
 
 
 def write_page(output, result):
     """Copies the page next to the list, with the list and its title filled in."""
     shutil.copytree(HERE / "site", output, dirs_exist_ok=True)
     fields = {
-        "title": html.escape(result["title"]),
+        "title": html.escape(f"{result['title']} · followroll"),
         "description": html.escape(f"Recent posts from the blogs of the people @{result['owner']['login']} follows on GitHub."),
         "avatar": html.escape(result["owner"]["avatar"]),
         # Inside <script>, only a closing tag could end the element early.
@@ -1046,6 +1199,12 @@ def main():
     args = parser.parse_args()
     output = Path(args.output)
 
+    # Other people's pages look for this one at <owner>.github.io/followroll/.
+    name = os.environ.get("GITHUB_REPOSITORY", "").partition("/")[2]
+    if name and name != REPO:
+        sys.exit(f'::error::This repository is called "{name}", but it has to be called "{REPO}": that is the '
+                 "address other followroll pages look for yours at. Rename it under Settings → General.")
+
     cache = load_previous(output, "following.json")
     result = collect(cache, load_previous(output, "state.json"))
     if result is None:
@@ -1053,14 +1212,30 @@ def main():
             sys.exit("following: GitHub not readable (no token, or the API call failed) and no earlier list to reuse")
         result = cache
         print("following: GitHub not readable, reusing the earlier list", file=sys.stderr)
+    # This copy's own version and repository, whatever an earlier list said.
+    result["version"] = VERSION
+    result["repo"] = os.environ.get("GITHUB_REPOSITORY") or f"{result['owner']['login']}/{REPO}"
+    latest = result.get("latest")
+    if latest and is_newer(latest["version"], VERSION):
+        print(f"::notice::followroll {latest['version']} is out and this copy is {VERSION}. "
+              f"Press Sync fork on the repository's page to update. What's new: {latest['url']}")
     output.mkdir(parents=True, exist_ok=True)
     (output / "following.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+    # The owner's own reposts, for the pages of the people who follow them.
+    owner = result["owner"]
+    mine = [{field: value for field, value in entry.items() if field not in ("by", "date")}
+            for entry in result.get("reposts", []) if entry["by"]["login"] == owner["login"]]
+    (output / "reposts.json").write_text(json.dumps(
+        {"login": owner["login"], "name": owner["name"], "reposts": mine}, ensure_ascii=False, indent=1), encoding="utf-8")
     if NEW:   # only a run that looked has something new to remember
-        (output / "state.json").write_text(json.dumps({"people": NEW}, ensure_ascii=False), encoding="utf-8")
+        (output / "state.json").write_text(json.dumps({"people": NEW, "rolls": NEW_ROLLS}, ensure_ascii=False), encoding="utf-8")
     if not args.no_page:
         write_page(output, result)
     print(f"following: {sum(not blog.get('self') for blog in result['blogs'])} blogs among {result['looked_at']} accounts, "
           f"{sum(len(blog['posts']) for blog in result['blogs'])} posts, updated {result['updated']}")
+    if result.get("reposts"):
+        print(f"reposts: {len(mine)} of the owner's own, {len(result['reposts']) - len(mine)} by the people they follow, "
+              f"{len(result.get('rolls') or {})} of whom have a followroll page")
     if result.get("discover"):
         found = result["discover"]
         print(f"discover: {len(found['blogs'])} active blogs among the {found['looked_at']} second-degree accounts "
