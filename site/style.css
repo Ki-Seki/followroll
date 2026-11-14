@@ -5,7 +5,7 @@
    stand for how much someone writes and are followroll's own mark, and
    Hacker News's orange on the one figure that comes from there. */
 :root {
-  --bg: #ffffff; --panel: #fafafa; --hover: #f4f4f5;
+  --bg: #ffffff; --hover: #f4f4f5;
   --fg: #111113; --mute: #5d5d66; --faint: #8b8b94; --line: #ebebed;
   --g0: #ebedf0; --g1: #9be9a8; --g2: #40c463; --g3: #30a14e; --g4: #216e39;
   --accent: #1f883d; --hn: #ff6600; --edge: rgb(0 0 0 / .06);
@@ -19,14 +19,14 @@
    they chose dark here. The same values twice: CSS has no way to say it once. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme=light]) {
-    --bg: #0b0b0c; --panel: #111113; --hover: #18181b;
+    --bg: #0b0b0c; --hover: #18181b;
     --fg: #ededee; --mute: #a1a1a9; --faint: #6f6f78; --line: #222225;
     --g0: #1b1b1f; --g1: #0e4429; --g2: #006d32; --g3: #26a641; --g4: #39d353;
     --accent: #3fb950; --edge: rgb(255 255 255 / .08);
   }
 }
 :root[data-theme=dark] {
-  --bg: #0b0b0c; --panel: #111113; --hover: #18181b;
+  --bg: #0b0b0c; --hover: #18181b;
   --fg: #ededee; --mute: #a1a1a9; --faint: #6f6f78; --line: #222225;
   --g0: #1b1b1f; --g1: #0e4429; --g2: #006d32; --g3: #26a641; --g4: #39d353;
   --accent: #3fb950; --edge: rgb(255 255 255 / .08);
@@ -72,17 +72,17 @@ b { font-weight: 600; }
 .owner h1 { overflow: hidden; font-size: 15px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; text-overflow: ellipsis; }
 /* About the page rather than of it: at the far end, and quieter */
 .ends { display: flex; align-items: center; gap: 14px; margin-left: auto; }
-.plain { color: var(--mute); font-size: 14px; font-weight: 500; transition: color .15s; }
-.plain:hover, .plain.on { color: var(--fg); }
-.gear { position: relative; display: grid; place-items: center; width: 30px; height: 30px; margin-right: -7px; border-radius: 8px; color: var(--mute); transition: color .15s, background .15s; }
+.gear, .close { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: var(--mute); transition: color .15s, background .15s; }
+.gear { position: relative; margin-right: -7px; }
 .gear .new { position: absolute; top: 3px; right: 2px; box-shadow: 0 0 0 2px var(--bg); }
-.gear:hover { background: var(--hover); color: var(--fg); }
+.gear:hover, .close:hover { background: var(--hover); color: var(--fg); }
 .gear.on { color: var(--fg); }
 .gear svg { width: 16px; height: 16px; }
 .tabs { display: flex; gap: 24px; align-self: stretch; }
-.tabs button { display: inline-flex; align-items: center; gap: 6px; margin-bottom: -1px; border-bottom: 1.5px solid transparent; color: var(--mute); font-size: 14px; font-weight: 500; transition: color .15s; }
-.tabs button:hover { color: var(--fg); }
-.tabs button.on { border-color: var(--fg); color: var(--fg); }
+.tabs button, .plain { color: var(--mute); font-size: 14px; font-weight: 500; transition: color .15s; }
+.tabs button:hover, .tabs button.on, .plain:hover, .plain.on { color: var(--fg); }
+.tabs button { display: inline-flex; align-items: center; gap: 6px; margin-bottom: -1px; border-bottom: 1.5px solid transparent; }
+.tabs button.on { border-color: var(--fg); }
 .tabs span { color: var(--faint); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
 
 /* ---------------------------------------------------------- columns */
@@ -97,12 +97,14 @@ b { font-weight: 600; }
 .post.solo { grid-template-columns: minmax(0, 1fr); }
 .av { position: relative; z-index: 1; align-self: start; margin-top: 2px; border-radius: 50%; }
 .by { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--faint); font-size: 13px; line-height: 20px; white-space: nowrap; }
-.who { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; margin: -2px -6px; padding: 2px 6px; border-radius: 6px; color: var(--fg); font-size: 14px; font-weight: 500; text-overflow: ellipsis; transition: background .15s; }
+.who, .repost .by b a { position: relative; z-index: 1; border-radius: 6px; color: var(--fg); font-size: 14px; font-weight: 500; transition: background .15s; }
+.who { display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; margin: -2px -6px; padding: 2px 6px; text-overflow: ellipsis; }
 .who img { flex: none; }
 .who:hover, .by b a:hover { background: var(--press); }
 .who + time::before, .by b + time::before, .why::before { content: "·"; margin-right: 8px; }
 .why { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.post h3 { margin-top: 4px; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -.012em; overflow-wrap: anywhere; text-wrap: balance; }
+.post h3, .card h3 { margin-top: 4px; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -.012em; }
+.post h3 { overflow-wrap: anywhere; text-wrap: balance; }
 /* The whole row opens the post; a title already read goes quiet. */
 .post h3 a::after { content: ""; position: absolute; inset: 0; }
 /* Under the pointer the row gets a soft ground, a little wider than itself,
@@ -122,16 +124,16 @@ b { font-weight: 600; }
 /* Hacker News, in its own colour */
 .stat i { width: 14px; height: 14px; border-radius: 3px; background: var(--hn); color: #fff; font: 700 10px/14px var(--font); text-align: center; }
 /* Repost: the one thing to do with a post, always in the same place */
-.rp { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; height: 28px; margin-left: -6px; padding: 0 6px; border-radius: 6px; transition: color .15s, background .15s; }
-.rp:hover { background: var(--press); color: var(--fg); }
+.rp, .flip { position: relative; z-index: 1; display: inline-flex; align-items: center; height: 28px; padding: 0 6px; border-radius: 6px; transition: color .15s, background .15s; }
+.rp:hover, .flip:hover { background: var(--press); color: var(--fg); }
+.rp { gap: 5px; margin-left: -6px; }
 .rp.on { color: var(--accent); }
 /* A translated post can be turned back to its own words, and forth again */
-.flip { position: relative; z-index: 1; display: inline-flex; align-items: center; height: 28px; margin: 0 -6px 0 auto; padding: 0 6px; border-radius: 6px; transition: color .15s, background .15s; }
-.flip:hover { background: var(--press); color: var(--fg); }
+.flip { margin: 0 -6px 0 auto; }
 .flip.on { color: var(--mute); }
 /* Who reposted, then what: the post itself stands back behind a rule */
 .repost .by b { min-width: 0; overflow: hidden; color: var(--mute); font-weight: 400; text-overflow: ellipsis; }
-.repost .by b a { position: relative; z-index: 1; margin: -2px -4px; padding: 2px 4px; border-radius: 6px; color: var(--fg); font-size: 14px; font-weight: 500; transition: background .15s; }
+.repost .by b a { margin: -2px -4px; padding: 2px 4px; }
 .post p.note { margin-top: 4px; color: var(--fg); -webkit-line-clamp: 4; }
 .quote { margin-top: 10px; padding-left: 14px; border-left: 2px solid var(--line); }
 .quote h3 { font-size: 16px; }
@@ -187,7 +189,8 @@ b { font-weight: 600; }
 .about { max-width: 640px; padding-bottom: 96px; scroll-margin-top: var(--bar); }
 .about > section { margin-top: 64px; scroll-margin-top: calc(var(--bar) + 28px); }
 .about > section:first-child { margin-top: 60px; }
-.about h2 { margin: 0 0 8px; font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.015em; }
+.about h2, .pop h3 { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.015em; }
+.about h2 { margin: 0 0 8px; }
 /* A question can be linked to: its # shows beside it under the pointer */
 .anchor { margin-left: 8px; color: var(--faint); font-weight: 400; opacity: 0; transition: opacity .15s, color .15s; }
 .about h2:hover .anchor, .anchor:focus-visible { opacity: 1; }
@@ -210,10 +213,8 @@ b { font-weight: 600; }
 .step b { font-size: 20px; line-height: 26px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .step small { color: var(--mute); font-size: 12px; line-height: 17px; }
 .flow > i { color: var(--faint); }
-/* The steps arrive one after another, in the order they happen; once, not
-   again each time something else on the page changes */
+/* The steps arrive one after another, in the order they happen */
 @keyframes arrive { from { opacity: 0; transform: translateY(6px); } }
-.still .flow > *, .still .graph path { animation: none; }
 .flow > * { animation: arrive .5s var(--ease) backwards; }
 .flow > :nth-child(2) { animation-delay: .15s; } .flow > :nth-child(3) { animation-delay: .3s; }
 .flow > :nth-child(4) { animation-delay: .45s; } .flow > :nth-child(5) { animation-delay: .6s; }
@@ -236,7 +237,7 @@ b { font-weight: 600; }
 .prefs { display: grid; grid-template-columns: max-content minmax(0, 1fr); margin: 14px 0 0; border-top: 1px solid var(--line); }
 .prefs dt, .prefs dd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; min-height: 46px; margin: 0; padding: 11px 0; border-bottom: 1px solid var(--line); color: var(--mute); font-size: 14px; }
 .prefs dt { padding-right: 36px; }
-.prefs .fresh { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; }
+.prefs .fresh { display: inline-flex; align-items: center; gap: 7px; }
 .seg { display: inline-flex; margin: -3px 0; padding: 2px; border-radius: 8px; background: var(--hover); }
 .seg button { height: 26px; padding: 0 11px; border-radius: 6px; color: var(--mute); font-size: 13px; font-weight: 500; transition: color .15s; }
 .seg button:hover { color: var(--fg); }
@@ -255,14 +256,13 @@ b { font-weight: 600; }
 .card { display: grid; grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: auto auto 1fr; column-gap: 28px; align-items: start; padding: 24px; border: 1px solid var(--line); border-radius: 14px; animation: arrive .35s var(--ease) backwards; }
 .card:not(:has(.shot)) { grid-template-columns: minmax(0, 1fr); }   /* nothing to show beside the words */
 .card > * { grid-column: 1; }
-.card .shot { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+.card .shot { grid-column: 2; grid-row: 1 / span 3; align-self: center; max-width: 389px; }
 .card .go, .card .small { grid-column: 1 / -1; }
-.card small { color: var(--faint); font-size: 12px; line-height: 16px; }
-.card h3 { margin-top: 4px; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -.012em; }
+.card small, .pop small { color: var(--faint); font-size: 12px; line-height: 16px; }
+/* A picture of where to press, in a step or in a sheet: a screenshot, not a face */
+.shot { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; background: none; outline: 0; }
 .about .card p { margin-top: 4px; color: var(--mute); }
-.card img { width: 100%; max-width: 389px; height: auto; border: 1px solid var(--line); border-radius: 8px; background: none; outline: 0; }
 .about .card .small { margin-top: 16px; }
-.card .small a { color: var(--fg); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; text-decoration-color: var(--faint); }
 .back { margin-left: auto; color: var(--mute); font-size: 13px; transition: color .15s; }
 .back:hover { color: var(--fg); }
 noscript .empty { padding: 20vh 24px; }
@@ -276,15 +276,13 @@ noscript .empty { padding: 20vh 24px; }
 .pop[open] { animation: rise .28s var(--ease); }
 .pop[open]::backdrop { animation: fade .2s ease-out; }
 .pop > div { position: relative; padding: 24px; }
-.pop small { color: var(--faint); font-size: 12px; line-height: 16px; }
-.pop h3 { margin-top: 4px; font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.015em; }
+.pop h3 { margin-top: 4px; }
 .pop p { margin-top: 6px; color: var(--mute); text-wrap: pretty; }
 .pop p b { color: var(--fg); font-weight: 500; }
-.pop img { width: 100%; height: auto; margin-top: 18px; border: 1px solid var(--line); border-radius: 8px; background: none; outline: 0; }
+.pop .shot { margin-top: 18px; }
 .pop .go { gap: 8px 16px; margin-top: 20px; }
 .pop .text { font-size: 14px; }
-.close { position: absolute; top: 16px; right: 16px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: var(--mute); transition: color .15s, background .15s; }
-.close:hover { background: var(--hover); color: var(--fg); }
+.close { position: absolute; top: 16px; right: 16px; }
 
 /* ----------------------------------------------------------- narrow */
 @media (max-width: 880px) {

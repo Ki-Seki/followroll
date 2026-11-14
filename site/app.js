@@ -11,16 +11,23 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const link = url => (/^https?:\/\//i.test(url || '') ? esc(url) : '#');
 const hostOf = url => { try { return new URL(url).host.replace(/^www\./, ''); } catch { return ''; } };
 const github = login => `https://github.com/${encodeURIComponent(login)}`;
+// Someone's followroll: its repository, and the page it publishes
+const rollRepo = login => `${github(login)}/followroll`;
+const pageOf = login => `https://${encodeURIComponent(login.toLowerCase())}.github.io/followroll/`;
 const age = iso => (Date.now() - Date.parse(iso)) / 1000;
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 // A post's address without the parts that vary between links to it
 const key = url => String(url).replace(/^https?:\/\/(www\.)?/i, '').replace(/#.*$/, '').replace(/\/+$/, '');
 // A summary as its author would have typed it: no space left before punctuation
 const tidy = text => String(text).replace(/\s+([,.;:!?])/g, '$1');
-// What this browser remembers, where it is allowed to
+// The name of a control that shows no words: for the pointer and for a screen reader
+const named = words => `title="${esc(words)}" aria-label="${esc(words)}"`;
+// What this browser remembers. Where it is not allowed to keep anything, what
+// is set still holds for this visit.
+const kept = {};
 const keep = {
-  get(name) { try { return localStorage.getItem(name) || ''; } catch { return ''; } },
-  set(name, value) { try { value ? localStorage.setItem(name, value) : localStorage.removeItem(name); } catch { /* not kept, then */ } },
+  get(name) { try { return localStorage.getItem(name) || ''; } catch { return kept[name] || ''; } },
+  set(name, value) { kept[name] = value; try { value ? localStorage.setItem(name, value) : localStorage.removeItem(name); } catch { /* for this visit only, then */ } },
 };
 
 const data = JSON.parse(document.getElementById('data').textContent);
@@ -58,8 +65,10 @@ const WORDS = {
     sent: 'Sent to GitHub. It shows here once you have pressed Start discussion there and this page has refreshed',
     notePh: 'Add a note (optional)', userPh: 'GitHub username', userTitle: 'Reposts are kept in your own followroll',
     repostTitle: 'Opens GitHub with everything filled in: press Start discussion there',
-    closed: there => `Reposts are kept in your followroll's Discussions, and those are off. <a href="${there}/settings" target="_blank" rel="noopener">Open its settings</a>, tick <b>Discussions</b> under Features, then press Repost again.`,
-    missing: login => `There is no github.com/${login}/followroll yet. <a href="#how-do-i-make-my-own">Make your own</a> first: it takes two minutes.`,
+    turnOnDiscussions: 'Turn on Discussions', openSettings: 'Open its settings', showWhere: 'Show me where',
+    closed: again => `Reposts are kept as discussions in your own followroll, and a new one has them switched off. In its settings on GitHub, tick <b>Discussions</b> under Features.${again ? ' Then press Repost again.' : ''}`,
+    discussionsAlt: 'The Discussions box among the features in the settings of a repository',
+    missing: login => `There is no github.com/${login}/followroll yet. <a href="#${QUESTIONS[2]}">Make your own</a> first: it takes two minutes.`,
     about: 'About', aboutTitle: 'What this is, and how to make your own', home: 'Back to the start',
     keptHere: 'What you set here is kept in this browser only.',
     thisPage: 'What is this page?', whatDiscover: 'What is Discover?', make: 'How do I make my own?',
@@ -73,6 +82,10 @@ const WORDS = {
     theme: 'Appearance', themes: { '': 'Auto', light: 'Light', dark: 'Dark' },   // "Auto" serves the language too
     trShown: 'Translated by DeepSeek. Press for the original', trHidden: 'Show the translation',
     repostAs: 'Reposting as', forget: 'Forget',
+    translation: 'Translation', translationOn: 'By DeepSeek', translationOff: 'Not set up', setUp: 'Set up',
+    setUpTranslation: 'Set up translation', openSecret: 'Open the secret form', getKey: 'Get a DeepSeek key',
+    howTranslate: 'If this page is yours: add a DeepSeek key to your followroll on GitHub, as a secret named <b>DEEPSEEK_API_KEY</b>. From the next refresh on, posts are translated between Chinese and English.',
+    secretAlt: 'The form for a new repository secret, with the name DEEPSEEK_API_KEY filled in',
     version: 'Version', update: v => `Update to ${v}`, whatsNew: v => `What's new in ${v}`, close: 'Close',
     howUpdate: 'Open your followroll on GitHub and press <b>Sync fork</b>, then <b>Update branch</b>. Your page rebuilds itself a minute or two later.',
     openRepo: 'Open my followroll', updateAlt: 'The Sync fork menu of a fork, open, with its Update branch button',
@@ -82,8 +95,7 @@ const WORDS = {
     allDone: all => `All ${all} steps done`, thatsIt: 'That is it',
     built: 'Your page is built in about a minute, and then refreshes on its own every few hours.',
     openMine: 'Open my page',
-    alsoDiscussions: where => `To repost, also turn on <b>Discussions</b>${where}.`,
-    inSettings: href => ` in <a href="${href}" target="_blank" rel="noopener">your followroll's settings</a>, under Features`,
+    alsoDiscussions: 'To repost, also turn on <b>Discussions</b> in its settings.',
     steps: [
       { title: 'Fork the repository', say: 'Press <b>Create fork</b>, and keep the name followroll.', label: 'Open the fork page', alt: 'The Fork button at the top of the repository' },
       { title: 'Enable workflows', say: 'Press the green button.', label: 'Open Actions', alt: 'The green button that enables workflows in a fork' },
@@ -118,8 +130,10 @@ const WORDS = {
     sent: '已发到 GitHub。在那边点 Start discussion、等本页刷新后就会显示',
     notePh: '写点备注（可不写）', userPh: 'GitHub 用户名', userTitle: '转发保存在你自己的 followroll 里',
     repostTitle: '会打开 GitHub 并填好内容，在那边点 Start discussion 即可',
-    closed: there => `转发保存在你的 followroll 的 Discussions 里，而它现在是关着的。<a href="${there}/settings" target="_blank" rel="noopener">打开仓库设置</a>，在 Features 里勾选 <b>Discussions</b>，然后再点一次转发。`,
-    missing: login => `还没有 github.com/${login}/followroll。先<a href="#how-do-i-make-my-own">创建自己的页面</a>，两分钟就好。`,
+    turnOnDiscussions: '先打开 Discussions', openSettings: '打开它的设置', showWhere: '看看在哪里',
+    closed: again => `转发会作为讨论保存在你自己的 followroll 里，而新建的 followroll 默认没有打开 Discussions。到 GitHub 上它的设置里，在 Features 下勾选 <b>Discussions</b>。${again ? '然后再点一次转发。' : ''}`,
+    discussionsAlt: '仓库设置里 Features 下的 Discussions 选项',
+    missing: login => `还没有 github.com/${login}/followroll。先<a href="#${QUESTIONS[2]}">创建自己的页面</a>，两分钟就好。`,
     about: '关于', aboutTitle: '这是什么，以及怎样创建自己的页面', home: '回到开头',
     keptHere: '这里的设置只保存在这个浏览器里。',
     thisPage: '这个页面是什么？', whatDiscover: '「发现」是什么？', make: '怎样创建我自己的页面？',
@@ -133,6 +147,10 @@ const WORDS = {
     theme: '外观', themes: { '': '自动', light: '浅色', dark: '深色' },
     trShown: 'DeepSeek 翻译，点一下看原文', trHidden: '显示译文',
     repostAs: '转发身份', forget: '清除',
+    translation: '翻译', translationOn: '由 DeepSeek 翻译', translationOff: '未设置', setUp: '设置',
+    setUpTranslation: '设置翻译', openSecret: '打开添加 secret 的页面', getKey: '获取 DeepSeek key',
+    howTranslate: '如果这是你的页面：把 DeepSeek 的 key 存到你在 GitHub 上的 followroll 里，作为名为 <b>DEEPSEEK_API_KEY</b> 的 secret。下次刷新起，文章就会在中文和英文之间互译。',
+    secretAlt: '新建仓库 secret 的表单，名称已填为 DEEPSEEK_API_KEY',
     version: '版本', update: v => `更新到 ${v}`, whatsNew: v => `${v} 有哪些变化`, close: '关闭',
     howUpdate: '在 GitHub 上打开你的 followroll，点 <b>Sync fork</b>，再点 <b>Update branch</b>。一两分钟后页面会自动重建。',
     openRepo: '打开我的 followroll', updateAlt: '一个 fork 上展开的 Sync fork 菜单，里面有 Update branch 按钮',
@@ -142,8 +160,7 @@ const WORDS = {
     allDone: all => `${all} 步都完成了`, thatsIt: '好了',
     built: '页面大约一分钟后生成，之后每隔几小时自动刷新。',
     openMine: '打开我的页面',
-    alsoDiscussions: where => `想转发的话，还要${where}打开 <b>Discussions</b>。`,
-    inSettings: href => `在<a href="${href}" target="_blank" rel="noopener">你的 followroll 的设置</a>里的 Features 下`,
+    alsoDiscussions: '想转发的话，还要在它的设置里打开 <b>Discussions</b>。',
     steps: [
       { title: 'Fork 这个仓库', say: '点 <b>Create fork</b>，仓库名保持 followroll。', label: '打开 Fork 页面', alt: '仓库顶部的 Fork 按钮' },
       { title: '启用工作流', say: '点那个绿色按钮。', label: '打开 Actions', alt: '在 fork 里启用工作流的绿色按钮' },
@@ -183,24 +200,31 @@ function wording(p) {
 }
 
 // "3h", "2d", "4mo", then the date: how long ago, as short as it can be said
+// One set of formatters a language: making one costs far more than using it
+const formats = {};
+const format = () => (formats[lang] ||= {
+  relative: new Intl.RelativeTimeFormat(locale(), { numeric: 'auto' }),
+  day: new Intl.DateTimeFormat(locale(), { year: 'numeric', month: 'short', day: 'numeric' }),
+  exact: new Intl.DateTimeFormat(locale(), { dateStyle: 'medium', timeStyle: 'short' }),
+});
 function since(iso) {
   const d = age(iso);
   if (d < 3600) return t('short', Math.max(1, Math.round(d / 60)), 'm');
   if (d < DAY) return t('short', Math.round(d / 3600), 'h');
   if (d < 30 * DAY) return t('short', Math.round(d / DAY), 'd');
   if (d < 365 * DAY) return t('short', Math.round(d / (30 * DAY)), 'mo');
-  return new Date(iso).toLocaleDateString(locale(), { year: 'numeric', month: 'short', day: 'numeric' });
+  return format().day.format(new Date(iso));
 }
 // The same, spelled out: "3 hours ago"
 function ago(iso) {
-  const d = age(iso), relative = new Intl.RelativeTimeFormat(locale(), { numeric: 'auto' });
+  const d = age(iso), { relative } = format();
   if (d < 3600) return relative.format(-Math.max(1, Math.round(d / 60)), 'minute');
   if (d < DAY) return relative.format(-Math.round(d / 3600), 'hour');
   if (d < 30 * DAY) return relative.format(-Math.round(d / DAY), 'day');
   if (d < 365 * DAY) return relative.format(-Math.round(d / (30 * DAY)), 'month');
-  return new Date(iso).toLocaleDateString(locale(), { year: 'numeric', month: 'short', day: 'numeric' });
+  return format().day.format(new Date(iso));
 }
-const exact = iso => new Date(iso).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' });
+const exact = iso => format().exact.format(new Date(iso));
 const time = (iso, say = since) => `<time datetime="${esc(iso)}" title="${esc(exact(iso))}">${esc(say(iso))}</time>`;
 
 // How recently someone posted, 0 (over a year ago) to 4 (this week)
@@ -224,9 +248,8 @@ function names(via, count, show = v => v.name) {
 const ICON = {
   talk: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 3.5h11V11H7l-3 2.5V11H2.5z"/></svg>',
   heart: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 13.5S2.5 10.3 2.5 6.2A2.9 2.9 0 0 1 8 5a2.9 2.9 0 0 1 5.5 1.2c0 4.1-5.5 7.3-5.5 7.3z"/></svg>',
-  feed: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 8.2a4.8 4.8 0 0 1 4.8 4.8M3 3.5A9.5 9.5 0 0 1 12.5 13"/><circle cx="3.6" cy="12.4" r=".9" fill="currentColor" stroke="none"/></svg>',
-  page: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3"/></svg>',
-  site: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.8 1.6 1.8 9.4 0 11M8 2.5c-1.8 1.6-1.8 9.4 0 11"/></svg>',
+  feed: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 7.6a6.4 6.4 0 0 1 6.4 6.4M2 2A12 12 0 0 1 14 14"/><circle cx="2.9" cy="13.1" r="1.15" fill="currentColor" stroke="none"/></svg>',
+  site: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="7.25"/><path d="M.75 8h14.5M8 .75c2.4 2.1 2.4 12.4 0 14.5M8 .75c-2.4 2.1-2.4 12.4 0 14.5"/></svg>',
   arrow: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9.5 4.5 13 8l-3.5 3.5"/></svg>',
   repost: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8V6.5a2 2 0 0 1 2-2h7M10.5 2.5l2 2-2 2M12.5 8v1.5a2 2 0 0 1-2 2h-7M5.5 13.5l-2-2 2-2"/></svg>',
   check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>',
@@ -253,8 +276,7 @@ function readHash() {
   if (who && lists) state.view = who.view;   // a person is shown on the list they are on
 }
 function writeHash() {
-  const view = state.view === 'about' && state.at ? state.at : state.view;   // still at the question it opened at
-  const parts = [view === 'following' ? '' : view, state.who ? `by=${encodeURIComponent(state.who)}` : ''].filter(Boolean);
+  const parts = [state.view === 'following' ? '' : state.view, state.who ? `by=${encodeURIComponent(state.who)}` : ''].filter(Boolean);
   history.replaceState(null, '', parts.length ? '#' + parts.join('&') : location.pathname + location.search);
 }
 
@@ -274,7 +296,7 @@ for (const of of [data.discover, data]) for (const b of of ? of.blogs : [])
   for (const p of b.posts) known.set(key(p.url), { ...p, login: b.login, name: b.name, avatar: b.avatar });
 // People with a followroll page of their own: login -> its address. The
 // owner has one by definition: this page.
-const rolls = { ...data.rolls, [data.owner.login]: `https://${encodeURIComponent(data.owner.login.toLowerCase())}.github.io/followroll/` };
+const rolls = { ...data.rolls, [data.owner.login]: pageOf(data.owner.login) };
 // Everyone this page can show on their own: the people with a blog on either
 // list, and those who only repost.
 const people = new Map();
@@ -295,8 +317,8 @@ function toPerson(login) {
 // since can be marked. The mark stays for the whole of this visit.
 const SEEN = `followroll:seen:${data.owner.login.toLowerCase()}`;
 const lastSeen = Number(keep.get(SEEN)) || 0;
-const newest = [data, data.discover].flatMap(of => (of ? of.blogs : [])).flatMap(b => b.posts)
-  .concat(data.reposts || []).reduce((latest, item) => Math.max(latest, item.ts), 0);
+const everyPost = [data, data.discover].flatMap(of => (of ? of.blogs : [])).flatMap(b => b.posts);
+const newest = everyPost.concat(data.reposts || []).reduce((latest, item) => Math.max(latest, item.ts), 0);
 const leave = () => keep.set(SEEN, String(newest));
 window.addEventListener('pagehide', leave);
 document.addEventListener('visibilitychange', () => { if (document.hidden) leave(); });
@@ -314,7 +336,7 @@ function newer() {
 const ME = 'followroll:me';
 const me = () => keep.get(ME);
 const setMe = login => keep.set(ME, login);
-const mine = () => `https://github.com/${encodeURIComponent(me())}/followroll`;
+const mine = () => rollRepo(me());
 const acts = [];   // the posts behind the repost buttons now on screen
 
 // Reposts go into the Discussions of the reader's own followroll, which a
@@ -351,7 +373,7 @@ const markSent = url => keep.set(SENT, JSON.stringify({ ...sent(), [key(url)]: D
 function repostURL(login, post, note) {
   const about = JSON.stringify({ url: post.url, author: post.author, login: post.login }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
   const body = `${note || ''}\n\n<!-- Anything above this line is your note. Leave the next line as it is, then press Start discussion. -->\n<!-- followroll ${about} -->`;
-  return `https://github.com/${encodeURIComponent(login)}/followroll/discussions/new?category=show-and-tell&title=${encodeURIComponent(post.title)}&body=${encodeURIComponent(body)}`;
+  return `${rollRepo(login)}/discussions/new?category=show-and-tell&title=${encodeURIComponent(post.title)}&body=${encodeURIComponent(body)}`;
 }
 
 // The repost button of a post, with how many of the people here reposted it.
@@ -361,7 +383,7 @@ function repostButton(p) {
   const label = made ? t('yours') : waiting ? t('sent') : group.length ? t('repostToo', names(group.map(r => r.by), group.length)) : t('repost');
   const count = group.length + (waiting ? 1 : 0);
   acts.push({ url: p.url, title: p.title, author: p.name, login: p.login, source: made ? made.source : waiting ? `${mine()}/discussions` : '' });
-  return `<button class="rp${made || waiting ? ' on' : ''}" type="button" data-act="${acts.length - 1}" title="${esc(label)}" aria-label="${esc(label)}">${ICON.repost}${count || ''}</button>`;
+  return `<button class="rp${made || waiting ? ' on' : ''}" type="button" data-act="${acts.length - 1}" ${named(label)}>${ICON.repost}${count || ''}</button>`;
 }
 
 // ------------------------------------------------------------ the lists
@@ -388,11 +410,18 @@ function statsHTML(p) {
 // under it.
 function infoHTML(p) {
   const w = wording(p);
-  const flip = w.tr ? `<button class="flip${w.on ? ' on' : ''}" type="button" data-flip="${esc(key(p.url))}" aria-pressed="${w.on}" title="${esc(t(w.on ? 'trShown' : 'trHidden'))}" aria-label="${esc(t(w.on ? 'trShown' : 'trHidden'))}">${ICON.translate}</button>` : '';
+  const flip = w.tr ? `<button class="flip${w.on ? ' on' : ''}" type="button" data-flip="${esc(key(p.url))}" aria-pressed="${w.on}" ${named(t(w.on ? 'trShown' : 'trHidden'))}>${ICON.translate}</button>` : '';
   return `<div class="info">${repostButton(p)}${statsHTML(p)}${flip}</div>`;
 }
 const freshHTML = ts => (lastSeen && ts > lastSeen ? `<i class="new" title="${esc(t('fresh'))}"></i>` : '');
 const faceHTML = (person, size) => `<img src="${link(person.avatar)}" alt="" width="${size}" height="${size}" loading="lazy">`;
+
+// A post's title, which opens it, and its summary, in the language they are shown in
+function wordsHTML(p) {
+  const w = wording(p);
+  return `<h3><a href="${link(p.url)}" target="_blank" rel="noopener">${esc(w.title)}</a></h3>
+${w.summary ? `<p>${esc(tidy(w.summary))}</p>` : ''}`;
+}
 
 // `solo` is a post among one person's own: who wrote it goes without saying.
 function postHTML(p, blog, solo) {
@@ -401,8 +430,7 @@ function postHTML(p, blog, solo) {
 ${solo ? '' : `<a class="av" ${toPerson(p.login)} tabindex="-1" aria-hidden="true">${faceHTML(p, 36)}</a>`}
 <div>
 <div class="by">${solo ? '' : `<a class="who" ${toPerson(p.login)}>${esc(p.name)}</a>`}${time(p.date)}${freshHTML(p.ts)}${why}</div>
-<h3><a href="${link(p.url)}" target="_blank" rel="noopener">${esc(wording(p).title)}</a></h3>
-${wording(p).summary ? `<p>${esc(tidy(wording(p).summary))}</p>` : ''}
+${wordsHTML(p)}
 ${infoHTML(p)}
 </div></article>`;
 }
@@ -422,8 +450,7 @@ ${solo ? '' : `<a class="av" ${toPerson(r.by.login)} tabindex="-1" aria-hidden="
 ${notes}
 <div class="quote">
 <div class="by"><a class="who" ${toPerson(p.login)}>${p.avatar ? faceHTML(p, 20) : ''}${esc(p.name)}</a>${p.date ? time(p.date) : ''}</div>
-<h3><a href="${link(p.url)}" target="_blank" rel="noopener">${esc(wording(p).title)}</a></h3>
-${wording(p).summary ? `<p>${esc(tidy(wording(p).summary))}</p>` : ''}
+${wordsHTML(p)}
 </div>
 ${infoHTML(p)}
 </div></article>`;
@@ -524,7 +551,8 @@ function graphSVG() {
   for (const mid of mids) curve(you, mid, false);
   for (const end of ends) for (const mid of mids) if (end.blog.via.some(via => via.login === mid.login)) curve(mid, end, end.blog.via_count > 1, true);
   face(you.x, you.y, small ? 18 : 24, data.owner.avatar, 'you');
-  mids.forEach((mid, i) => face(mid.x, mid.y, small ? 15 : 17, `https://github.com/${encodeURIComponent(mid.login)}.png?size=72`, `m${i}`));
+  // A face the page already shows comes from where it is already loaded
+  mids.forEach((mid, i) => face(mid.x, mid.y, small ? 15 : 17, personOf(mid.login)?.avatar || `${github(mid.login)}.png?size=72`, `m${i}`));
   const labels = ends.map((end, i) => {
     face(end.x, end.y, small ? 15 : 17, end.blog.avatar, `e${i}`);
     return `<text x="${end.x + 26}" y="${end.y - 2}">${esc(end.blog.name)}</text><text x="${end.x + 26}" y="${end.y + 14}" class="dim">${esc(t('graphBy', end.blog.via_count))}</text>`;
@@ -537,7 +565,7 @@ function graphSVG() {
 // questions a visitor has, each answered in a sentence or two and a picture.
 // Making one's own is the last of them, with its steps right there.
 // A question carries the link to itself, which shows beside it under the pointer.
-const askHTML = (place, words) => `<h2>${words}<a class="anchor" href="#${place}" title="${esc(t('linkHere'))}" aria-label="${esc(t('linkHere'))}">#</a></h2>`;
+const askHTML = (place, words) => `<h2>${words}<a class="anchor" href="#${place}" ${named(t('linkHere'))}>#</a></h2>`;
 
 function aboutHTML() {
   const owner = data.owner, first = owner.name.split(/\s+/)[0];
@@ -567,9 +595,13 @@ ${makeHTML()}
 </div></main>`;
 }
 
-// What a reader can set for themselves, all of it kept in their browser, and
-// which version this copy is. A newer one is one line here; how to get it is
-// said in a sheet, when asked for.
+// Whether this page has translations at all, which it has once its owner has set them up
+const translated = () => everyPost.some(p => p.tr);
+
+// What a reader can set for themselves, all of it kept in their browser; then
+// what is the page's own: whether it translates, and which version it is. How
+// to set translation up, and how to get a newer version, are each one line
+// here and said in a sheet when asked for.
 function settingsHTML() {
   const latest = newer();
   const choice = (attr, names, on, label) => `<span class="seg">${names.map(name => `<button type="button" data-${attr}="${name}"${name === on ? ' class="on"' : ''}>${label(name)}</button>`).join('')}</span>`;
@@ -579,6 +611,7 @@ function settingsHTML() {
 <dt>${t('language')}</dt><dd>${choice('lang', ['', ...Object.keys(WORDS)], chosenLang(), name => (name ? WORDS[name].name : t('themes')['']))}</dd>
 <dt>${t('theme')}</dt><dd>${choice('shade', ['', 'light', 'dark'], theme(), name => t('themes')[name])}</dd>
 ${me() ? `<dt>${t('repostAs')}</dt><dd><span>github.com/<b>${esc(me())}</b>/followroll</span><button class="text" type="button" data-do="forget">${t('forget')}</button></dd>` : ''}
+<dt>${t('translation')}</dt><dd>${translated() ? `<span>${t('translationOn')}</span>` : `<span>${t('translationOff')}</span><button class="text" type="button" data-do="translation">${t('setUp')}</button>`}</dd>
 ${data.version ? `<dt>${t('version')}</dt><dd><span>${esc(data.version)}</span>${latest
     ? `<button class="text fresh" type="button" data-do="update"><i class="new"></i>${esc(t('update', latest.version))}</button>` : ''}</dd>` : ''}
 </dl>
@@ -586,14 +619,39 @@ ${data.version ? `<dt>${t('version')}</dt><dd><span>${esc(data.version)}</span>$
 </div></main>`;
 }
 
-// How to update: the two presses on GitHub, a picture of them, and the way there
+// A sheet says one thing: what it is about, what to do, a picture of where to
+// press, and the way there.
+const sheetHTML = ({ about, title, text, shot, alt, size, go }) => `<small>${about}</small>
+<h3>${title}</h3>
+<p>${text}</p>
+${shot ? `<img class="shot" src="setup/${shot}${isDark() ? '-dark' : ''}.webp" alt="${esc(alt)}" width="${size[0]}" height="${size[1]}">` : ''}
+<div class="go">${go}</div>`;
+const outside = (href, words, look = 'button') => `<a class="${look}" href="${href}" target="_blank" rel="noopener">${words}${look === 'button' ? ICON.out : ''}</a>`;
+// This copy's own repository on GitHub, where its owner sets it up and updates it
+const repoURL = () => (/^[\w.-]+\/[\w.-]+$/.test(data.repo || '') ? `https://github.com/${data.repo}` : '');
+
+// How to update: the two presses on GitHub
 function updateHTML() {
-  const latest = newer(), repo = /^[\w.-]+\/[\w.-]+$/.test(data.repo || '') ? `https://github.com/${data.repo}` : '';
-  return `<small>${t('version')} ${esc(data.version)}</small>
-<h3>${esc(t('update', latest.version))}</h3>
-<p>${t('howUpdate')}</p>
-<img src="setup/update${isDark() ? '-dark' : ''}.webp" alt="${esc(t('updateAlt'))}" width="784" height="676">
-<div class="go">${repo ? `<a class="button" href="${repo}" target="_blank" rel="noopener">${t('openRepo')}${ICON.out}</a>` : ''}<a class="text" href="${link(latest.url)}" target="_blank" rel="noopener">${esc(t('whatsNew', latest.version))}</a></div>`;
+  const latest = newer(), repo = repoURL();
+  return sheetHTML({ about: `${t('version')} ${esc(data.version)}`, title: esc(t('update', latest.version)), text: t('howUpdate'),
+    shot: 'update', alt: t('updateAlt'), size: [784, 676],
+    go: (repo ? outside(repo, t('openRepo')) : '') + outside(link(latest.url), esc(t('whatsNew', latest.version)), 'text') });
+}
+
+// How to have posts translated: a key, kept as a secret in the page's repository
+function translationHTML() {
+  const repo = repoURL();
+  return sheetHTML({ about: t('translation'), title: t('setUpTranslation'), text: t('howTranslate'),
+    shot: 'secret', alt: t('secretAlt'), size: [784, 592],
+    go: (repo ? outside(`${repo}/settings/secrets/actions/new`, t('openSecret')) : '') + outside('https://platform.deepseek.com/api_keys', t('getKey'), 'text') });
+}
+
+// Where to turn Discussions on, for the followroll of whoever is reposting;
+// said when a repost found them off, and after setting one up.
+function discussionsHTML(login, again) {
+  return sheetHTML({ about: t('repost'), title: t('turnOnDiscussions'), text: t('closed', again),
+    shot: 'discussions', alt: t('discussionsAlt'), size: [784, 400],
+    go: login ? outside(`${rollRepo(login)}/settings#discussions-feature`, t('openSettings')) : '' });
 }
 
 // What takes a few words and a picture is said in a sheet over the page when
@@ -601,7 +659,7 @@ function updateHTML() {
 function sheet(html) {
   const pop = document.createElement('dialog');
   pop.className = 'pop';
-  pop.innerHTML = `<div>${html}<button class="close" type="button" title="${esc(t('close'))}" aria-label="${esc(t('close'))}">${ICON.x}</button></div>`;
+  pop.innerHTML = `<div>${html}<button class="close" type="button" ${named(t('close'))}>${ICON.x}</button></div>`;
   // A press on the ground around the sheet, which is the dialog itself, closes it too
   pop.addEventListener('click', e => { if (e.target === pop || e.target.closest('.close')) pop.close(); });
   pop.addEventListener('close', () => pop.remove());
@@ -619,7 +677,7 @@ const STEP_TO = [() => `${UPSTREAM}/fork`, own => `${own}/actions`, own => `${ow
 // address depends on whose fork it is, so it asks for the username first.
 function openHTML() {
   const step = t('steps')[state.step], second = state.went ? ' ghost' : '';
-  if (!step) return me() ? `<a class="button" href="https://${encodeURIComponent(me().toLowerCase())}.github.io/followroll/" target="_blank" rel="noopener">${t('openMine')}${ICON.out}</a>`
+  if (!step) return me() ? outside(pageOf(me()), t('openMine'))
     : `<button class="button" type="button" data-do="needme">${t('openMine')}</button>`;
   if (state.step && !me()) return `<button class="button${second}" type="button" data-do="needme" title="${esc(t('needName'))}">${step.label}${ICON.out}</button>`;
   return `<a class="button${second}" data-do="went" href="${link(STEP_TO[state.step](mine()))}" target="_blank" rel="noopener">${step.label}${ICON.out}</a>`;
@@ -630,19 +688,11 @@ function makeHTML() {
   state.step = n;
   const dots = steps.map((s, i) => `<button type="button" data-do="step" data-step="${i}" class="${i === n ? 'on' : i < n ? 'done' : ''}" title="${esc(s.title)}" aria-label="${esc(t('stepOf', i + 1, steps.length))}: ${esc(s.title)}"${i === n ? ' aria-current="step"' : ''}>${i < n ? ICON.check : i + 1}</button>`).join('<i></i>');
   const back = n ? `<button class="back" type="button" data-do="back">${t('back')}</button>` : '';
-  const card = step ? `<section class="card">
-<small>${t('stepOf', n + 1, steps.length)}</small>
-<h3>${step.title}</h3>
-<p>${step.say}</p>
-<img class="shot" src="setup/${n + 1}${isDark() ? '-dark' : ''}.webp" alt="${esc(step.alt)}" width="778" height="210">
-<div class="go"><span>${openHTML()}</span><button class="button${state.went ? '' : ' ghost'}" type="button" data-do="next">${n === steps.length - 1 ? t('done') : t('next')}</button>${back}</div>
-</section>` : `<section class="card">
-<small>${t('allDone', steps.length)}</small>
-<h3>${t('thatsIt')}</h3>
-<p>${t('built')}</p>
-<div class="go"><span>${openHTML()}</span>${back}</div>
-<p class="small">${t('alsoDiscussions', me() ? t('inSettings', `${link(mine())}/settings`) : '')}</p>
-</section>`;
+  const card = `<section class="card">${step
+    ? sheetHTML({ about: t('stepOf', n + 1, steps.length), title: step.title, text: step.say, shot: n + 1, alt: step.alt, size: [778, 210],
+      go: `<span>${openHTML()}</span><button class="button${state.went ? '' : ' ghost'}" type="button" data-do="next">${n === steps.length - 1 ? t('done') : t('next')}</button>${back}` })
+    : `${sheetHTML({ about: t('allDone', steps.length), title: t('thatsIt'), text: t('built'), go: `<span>${openHTML()}</span>${back}` })}
+<p class="small">${t('alsoDiscussions')} <button class="text" type="button" data-do="discussions">${t('showWhere')}</button></p>`}</section>`;
   return `<section class="wizard" id="${QUESTIONS[2]}">
 ${askHTML(QUESTIONS[2], t('make'))}
 <p>${t('setupLead')}</p>
@@ -666,7 +716,6 @@ function edges() {
 // lists; and at the far end what is about the page rather than of it.
 function render() {
   acts.length = 0;
-  app.classList.remove('still');
   document.documentElement.lang = locale();
   const tab = (view, count) => `<button type="button" role="tab" data-view="${view}" aria-selected="${state.view === view}"${state.view === view ? ' class="on"' : ''}>${t(view)}<span>${count}</span></button>`;
   app.innerHTML = `
@@ -678,7 +727,7 @@ function render() {
 <div class="tabs" role="tablist">${tab('following', data.blogs.length)}${data.discover ? tab('discover', data.discover.blogs.length) : ''}</div>
 <div class="ends">
 <a class="plain${state.view === 'about' ? ' on' : ''}" href="#about" title="${esc(t('aboutTitle'))}">${t('about')}</a>
-<a class="gear${state.view === 'settings' ? ' on' : ''}" href="#settings" title="${esc(t('settings'))}" aria-label="${esc(t('settings'))}">${ICON.gear}${newer() ? '<i class="new"></i>' : ''}</a>
+<a class="gear${state.view === 'settings' ? ' on' : ''}" href="#settings" ${named(t('settings'))}>${ICON.gear}${newer() ? '<i class="new"></i>' : ''}</a>
 </div>
 </div></nav>
 ${state.view === 'about' ? aboutHTML() : state.view === 'settings' ? settingsHTML() : `<div class="wrap cols">
@@ -692,15 +741,19 @@ ${state.view === 'about' ? aboutHTML() : state.view === 'settings' ? settingsHTM
 // An address that names a place within a view opens the view there
 const settle = () => { if (state.at) document.getElementById(state.at)?.scrollIntoView({ block: 'start' }); };
 
-// Renders again where the reader is, without playing again what was drawn
-// when they arrived
+// Renders again where the reader is
 function refresh() {
   const top = window.scrollY, along = app.querySelector('.people')?.scrollLeft || 0;
   render();
-  app.classList.add('still');
   const row = app.querySelector('.people');
   if (row) { row.scrollLeft = along; edges(); }
   window.scrollTo(0, top);
+}
+
+// The steps are drawn again on their own: the rest of About stays as it was drawn
+function remake() {
+  const steps = app.querySelector('.wizard');
+  if (steps) steps.outerHTML = makeHTML();
 }
 
 // A line under the post to write a note on; the first time it also asks which
@@ -741,9 +794,11 @@ app.addEventListener('submit', async e => {
   button.disabled = false;
   if (answer === 'ok' || answer === 'unknown') return send(tab);
   if (tab) tab.close();
-  if (answer === 'closed') setMe(login);
   form.querySelector('.hint')?.remove();
-  form.insertAdjacentHTML('beforeend', `<div class="hint">${answer === 'closed' ? t('closed', `https://github.com/${encodeURIComponent(login)}/followroll`) : t('missing', esc(login))}</div>`);
+  // Discussions off: where to turn them on is shown over the page, and the
+  // line stays as it was written, to be sent once they are on
+  if (answer === 'closed') { setMe(login); return sheet(discussionsHTML(login, true)); }
+  form.insertAdjacentHTML('beforeend', `<div class="hint">${t('missing', esc(login))}</div>`);
 });
 
 // The username typed on the setup page is kept as it is typed, and the
@@ -775,12 +830,14 @@ app.addEventListener('click', e => {
     return window.scrollTo(0, 0);
   }
   if (act === 'update') return sheet(updateHTML());
+  if (act === 'translation') return sheet(translationHTML());
+  if (act === 'discussions') return sheet(discussionsHTML(me()));
   if (act === 'needme') return app.querySelector('.you input').focus();
   if (act === 'went') {   // GitHub opens in its own tab; here, "Next" becomes the thing to press
     e.preventDefault();
     window.open(e.target.closest('a').href, '_blank', 'noopener');
     state.went = true;
-    return refresh();
+    return remake();
   }
   if (tab) {
     // The tab you are on takes you back to everyone, at the top.
@@ -796,9 +853,9 @@ app.addEventListener('click', e => {
   } else if (act === 'next') { Object.assign(state, { step: state.step + 1, went: false });
   } else if (act === 'back') { Object.assign(state, { step: state.step - 1, went: false });
   } else return;
-  writeHash();
-  // Keep the reader's place for "more" and the like; a new person or tab starts at the top.
-  if (['more', 'everyone', 'forget', 'step', 'next', 'back'].includes(act)) return refresh();
+  if (e.target.closest('.wizard')) return remake();   // a press in the steps draws the steps again
+  if (!tab && !pick) return refresh();   // anything else that is not a move keeps the reader's place
+  writeHash();   // a new person or tab starts at the top
   const along = app.querySelector('.people')?.scrollLeft || 0;
   render();
   const row = app.querySelector('.people'), body = app.querySelector('.cols, .about');
@@ -834,7 +891,7 @@ window.addEventListener('pointerup', () => {
 });
 
 narrow.addEventListener('change', render);
-dusk.addEventListener('change', () => { if (state.view === 'about') refresh(); });   // its pictures come in both
+dusk.addEventListener('change', remake);   // their pictures come in both
 window.addEventListener('resize', edges);
 window.addEventListener('hashchange', () => {
   const was = state.view, who = state.who;

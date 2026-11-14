@@ -65,8 +65,6 @@ Environment (an empty value counts as unset):
 """
 
 import argparse
-import base64
-import calendar
 import collections
 import concurrent.futures
 import datetime
@@ -159,15 +157,19 @@ def get(url):
     return (final, body) if status == "ok" else None
 
 
-def post_json(url, body):
-    """POSTs JSON and returns the decoded JSON reply, or None."""
-    request = urllib.request.Request(url, data=json.dumps(body).encode(), headers={
-        "User-Agent": USER_AGENT, "Content-Type": "application/json"})
+def post_json(url, body, token=None, timeout=TIMEOUT, limit=MAX_BYTES):
+    """POSTs JSON. Returns (the decoded JSON reply or None, the HTTP status if the server refused)."""
+    headers = {"User-Agent": USER_AGENT, "Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-            return json.loads(response.read(MAX_BYTES))
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read(limit)), None
+    except urllib.error.HTTPError as error:
+        return None, error.code
     except Exception:
-        return None
+        return None, None
 
 
 def text_of(body):
@@ -240,20 +242,11 @@ def graphql_reply(query, **variables):
     """The whole reply ({"data": ..., "errors": ...}), or None when GitHub gave no usable answer.
 
     Tried three times: these requests fail now and then for no lasting reason."""
-    body = json.dumps({"query": query, "variables": variables}).encode()
     for pause in (0, 2, 6):
         time.sleep(pause)
-        request = urllib.request.Request(API_URL, data=body, headers={
-            "Authorization": f"Bearer {TOKEN}", "User-Agent": USER_AGENT, "Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                reply = json.loads(response.read())
-        except urllib.error.HTTPError as error:
-            if error.code in (401, 404):   # a bad token or address will not get better
-                return None
-            continue
-        except Exception:
-            continue
+        reply, refused = post_json(API_URL, {"query": query, "variables": variables}, TOKEN, timeout=30, limit=None)
+        if refused in (401, 404):   # a bad token or address will not get better
+            return None
         if isinstance(reply, dict) and reply.get("data") is not None:
             return reply
     return None
@@ -262,6 +255,13 @@ def graphql_reply(query, **variables):
 def graphql(query, **variables):
     """Returns the response's data, or None on any failure."""
     return (graphql_reply(query, **variables) or {}).get("data")
+
+
+def repository(owner, name, fields):
+    """The asked-for fields of a repository: {} when there is none, None when GitHub gave no answer."""
+    data = graphql("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){%s}}" % fields,
+                   owner=owner, name=name)
+    return None if data is None else data.get("repository") or {}
 
 
 def whose_list():
@@ -416,14 +416,9 @@ def read_feed(url, validators=None):
     return (final, posts, authors, fresh) if posts else None
 
 
-class Elsewhere:
-    """What find_feed returns when a profile link leads to an account on
-    someone else's platform: no feed, and no use keeping one found there before."""
-    def __bool__(self):
-        return False
-
-
-ELSEWHERE = Elsewhere()
+# What find_feed returns when a profile link leads to an account on someone
+# else's platform: no feed, and no use keeping one found there before.
+ELSEWHERE = object()
 BLOG_PATH = re.compile(r"^/(blog|posts?|writing|articles?|notes|essays)/?$", re.I)
 
 
@@ -438,8 +433,8 @@ def find_feed(site):
     the page's address after any redirects) for a site.
 
     None means the site gave no usable answer (try again soon); False means
-    it answered and has no feed; ELSEWHERE, false as well, means the link
-    leads on to an account on someone else's platform."""
+    it answered and has no feed; ELSEWHERE means the link leads on to an
+    account on someone else's platform."""
     status, base, body, _ = fetch(site)
     if status != "ok":
         return False if status == "gone" else None
@@ -451,7 +446,7 @@ def find_feed(site):
     # (dept.edu/~me), where the root's feed belongs to the institution.
     parts = urlparse(base)
     shared = parts.path.startswith("/~") or re.search(r"\.(edu|ac)(\.[a-z]{2})?$", parts.netloc)
-    root = (base if base.endswith("/") else base + "/") if shared else f"{parts.scheme}://{parts.netloc}/"
+    root = (base if base.endswith("/") else base + "/") if shared else urljoin(base, "/")
     for url in dict.fromkeys(declared_feeds(base, tags) + [urljoin(root, path) for path in FEED_PATHS]):
         feed = read_feed(url)
         if feed:
@@ -490,9 +485,7 @@ def setting(text, name):
 
 def pages_repo_with_discussions(login):
     """<login>/<login>.github.io when it has Discussions on: where giscus usually points."""
-    data = graphql("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
-                   "nameWithOwner hasDiscussionsEnabled}}", owner=login, name=f"{login}.github.io")
-    repo = (data or {}).get("repository") or {}
+    repo = repository(login, f"{login}.github.io", "nameWithOwner hasDiscussionsEnabled") or {}
     return repo.get("nameWithOwner") if repo.get("hasDiscussionsEnabled") else None
 
 
@@ -676,7 +669,7 @@ def disqus_threads(posts, forum):
 def twikoo_threads(posts, server):
     """Comment counts from the blog's own Twikoo server, all posts in one request."""
     paths = {urlparse(post["url"]).path: post for post in posts}
-    reply = post_json(server, {"event": "GET_COMMENTS_COUNT", "urls": list(paths), "includeReply": True})
+    reply, _ = post_json(server, {"event": "GET_COMMENTS_COUNT", "urls": list(paths), "includeReply": True})
     if not isinstance(reply, dict) or not isinstance(reply.get("data"), list):
         return   # no answer: the posts keep what they had
     counts = {entry.get("url"): entry.get("count") for entry in reply["data"] if isinstance(entry, dict)}
@@ -766,17 +759,16 @@ def belongs(page, feed):
     return host(page) == host(feed) and (there.startswith(path + "/") or path.rsplit("/", 1)[-1] in there.split("/"))
 
 
-def is_own_site(person, page, home, authors, feed):
+def is_own_site(person, site, page, home, authors, feed):
     """Whether a feed found from someone's site is their own writing rather
     than, say, their employer's. None when that could not be found out today.
 
-    `page` is where their profile link really leads, after any redirects, and
-    `home` is what that page says."""
+    `site` is the link that was followed, `page` is where it really leads,
+    after any redirects, and `home` is what that page says."""
     login, name = person["login"].lower(), squash(person.get("name"))
     carries = lambda text: (len(squash(login)) >= 4 and squash(login) in text) or (len(name) >= 5 and name in text)
-    if is_platform(page):
-        return False   # an account on someone else's platform, whatever it links to
-    if host(page) == f"{login}.github.io":
+    # Their own Pages site, wherever it may lead on to
+    if f"{login}.github.io" in (host(site), host(page)):
         return True
     # The address carries their login or name: danluu.com, simonwillison.net
     if carries(squash(host(page))):
@@ -798,18 +790,16 @@ def is_own_site(person, page, home, authors, feed):
     if back.search(home.lower()):
         if own:
             return True
-        parts = urlparse(page)
-        status, _, body, _ = fetch(f"{parts.scheme}://{parts.netloc}/")
+        status, _, body, _ = fetch(urljoin(page, "/"))
         if status == "ok" and back.search(text_of(body).lower()):
             return True
         if status == "fail":
             return None
     # Their Pages repository's CNAME points at the site
-    data = graphql('query($owner:String!,$name:String!){repository(owner:$owner,name:$name){'
-                   'object(expression:"HEAD:CNAME"){... on Blob{text}}}}', owner=login, name=f"{login}.github.io")
-    if data is None:
+    repo = repository(login, f"{login}.github.io", 'object(expression:"HEAD:CNAME"){... on Blob{text}}')
+    if repo is None:
         return None
-    cname = ((data.get("repository") or {}).get("object") or {}).get("text") or ""
+    cname = (repo.get("object") or {}).get("text") or ""
     return cname.strip().lower().removeprefix("www.") == host(page)
 
 
@@ -869,11 +859,17 @@ def recent_dates(*lists):
     return sorted({ts for dates in lists for ts in dates if ts > start})
 
 
-def refresh_counts(posts, comments, first_page=None):
+def shown_on_discover(posts):
+    """What the Discover list shows of a blog: its newest few posts, none older than a year."""
+    year = time.time() - 365 * 86400
+    return [post for post in posts if post["ts"] > year][:DISCOVER_POSTS]
+
+
+def refresh_counts(posts, comments, first_page=None, full=True):
     """Reads comment and like counts again where they may have moved."""
     if not comments:
         return
-    newest = posts[:COUNTED_POSTS]
+    newest = posts[:COUNTED_POSTS] if full else shown_on_discover(posts)
     if comments["system"] in ("disqus", "twikoo"):   # one request covers them all
         todo = newest
     else:   # one request a post, so only new and recent ones
@@ -883,35 +879,48 @@ def refresh_counts(posts, comments, first_page=None):
         read_threads(todo, comments, first_page if todo[0] is posts[0] else None)
 
 
+def counts_again(person, blog, comments, full):
+    """Reads the counts of a blog looked at before, where they may have moved. Returns its comment system."""
+    counted = blog["posts"] if full else shown_on_discover(blog["posts"])
+    page = None
+    if counted and counted[0]["url"] not in SEEN:
+        # A new post: a chance to notice comments the blog has added since.
+        response = get(counted[0]["url"])
+        page = text_of(response[1]) if response else None
+        if page and not comments:
+            comments = comment_system(page, Tags(page), person["login"])
+    refresh_counts(blog["posts"], comments, page, full)
+    return comments
+
+
 def revisit(person, known, full):
     """The blog of an account whose feed is already known, or None if the feed has gone."""
     key = person["login"].lower()
     before = BLOGS.get(person["login"])
-    # "Has it changed?" is only worth asking when the old entry can be reused:
-    # it must hold as many posts as asked for, and have been built from the
-    # whole feed rather than its first few posts, as earlier versions did.
-    reusable = before and (known.get("full") or not full) and known.get("whole")
+    # "Has it changed?" is only worth asking when the answer saves work. It
+    # does when the old entry can be reused: it must hold as many posts as
+    # asked for, and have been built from the whole feed rather than its first
+    # few posts, as earlier versions did. And it does for a blog that had
+    # nothing recent enough for Discover to show: unchanged, it still has not.
+    dormant = not before and not full and not shown_on_discover([{"ts": ts} for ts in known.get("dates") or []])
+    reusable = (before or dormant) and (known.get("full") or not full) and known.get("whole")
     feed = read_feed(known["feed"], known.get("validators") if reusable else None)
     if feed is None:
         return None
     comments = known.get("comments")
+    if feed == "same" and not before:   # unchanged, and it had nothing recent enough to show
+        NEW[key] = {**known, "checked": int(time.time()), "failing": None}
+        return {"login": person["login"], "host": host(known["site"]), "posts": []}
     if feed == "same":
         blog = {**before, "name": person.get("name") or person["login"], "avatar": person.get("avatarUrl"),
                 "self": bool(person.get("self")), "months": months(recent_dates(known.get("dates") or []))}
         blog.pop("via", None), blog.pop("via_count", None)
-        refresh_counts(blog["posts"], comments)
+        refresh_counts(blog["posts"], comments, full=full)
         NEW[key] = {**known, "checked": int(time.time()), "failing": None}
         return blog
     address, posts, _, validators = feed
     blog = new_blog(person, known["site"], address, posts, (before or {}).get("posts", []))
-    page = None
-    if blog["posts"][0]["url"] not in SEEN:
-        # A new post: a chance to notice comments the blog has added since.
-        response = get(blog["posts"][0]["url"])
-        page = text_of(response[1]) if response else None
-        if page and not comments:
-            comments = comment_system(page, Tags(page), person["login"])
-    refresh_counts(blog["posts"], comments, page)
+    comments = counts_again(person, blog, comments, full)
     NEW[key] = {**known, "checked": int(time.time()), "feed": address, "validators": validators,
                 "comments": comments, "full": full, "whole": True, "failing": None,
                 "dates": recent_dates(known.get("dates") or [], [post["ts"] for post in posts])}
@@ -936,34 +945,44 @@ def blog_of(person, full=True):
         elif time.time() - known["checked"] < patience(key, known.get("definite", True)):
             NEW[key] = known
             return None
-    answered, refused = False, False
+    answered, not_theirs = False, False
     for site in candidate_sites(person):
         found = find_feed(site)
+        if found is ELSEWHERE:
+            answered = not_theirs = True
+            continue
         answered = answered or found is not None
-        refused = refused or found is ELSEWHERE
         if not found:
             continue
         feed, posts, home, authors, validators, landed = found
-        own = is_own_site(person, landed, home, authors, feed)
+        own = is_own_site(person, site, landed, home, authors, feed)
+        if own is None:
+            answered = False   # no telling today, which counts as no answer
+            break
         if not own:
-            # Not theirs, or (None) no telling today, which counts as no answer.
-            refused, answered = refused or own is False, answered and own is False
+            not_theirs = True
             break
         # A blog known before keeps the older posts it has built up.
         same = known and known.get("feed") == feed
         blog = new_blog(person, site, feed, posts, (BLOGS.get(person["login"]) or {}).get("posts", []) if same else ())
-        # The newest post's page tells where the blog's comments live.
-        response = get(blog["posts"][0]["url"])
-        page = text_of(response[1]) if response else None
-        comments = comment_system(page, Tags(page), person["login"]) if page else None
-        if comments:
-            read_threads(blog["posts"][:COUNTED_POSTS], comments, page)
+        counted = blog["posts"][:COUNTED_POSTS] if full else shown_on_discover(blog["posts"])
+        if same:
+            comments = counts_again(person, blog, known.get("comments"), full)
+        elif counted:
+            # The newest post's page tells where the blog's comments live.
+            response = get(blog["posts"][0]["url"])
+            page = text_of(response[1]) if response else None
+            comments = comment_system(page, Tags(page), person["login"]) if page else None
+            if comments:
+                read_threads(counted, comments, page)
+        else:
+            comments = None
         NEW[key] = {"website": website, "checked": int(time.time()), "site": site, "feed": feed,
                     "validators": validators, "comments": comments, "rules": RULES,
                     "dates": recent_dates((known.get("dates") or []) if same else [], [post["ts"] for post in posts]),
                     "full": full, "whole": True}
         return blog
-    if known and known.get("feed") and known.get("website") == website and not refused:
+    if known and known.get("feed") and known.get("website") == website and not not_theirs:
         # A blog found before can't be read today. It stays as it was, and is
         # tried again next time; only after two weeks of this is it let go.
         # (One that turned out not to be theirs goes at once.)
@@ -1019,13 +1038,12 @@ def own_reposts(login):
     post. Whatever else it says is the note. Deleting or closing it takes the
     repost back."""
     owner, _, name = (os.environ.get("GITHUB_REPOSITORY") or f"{login}/{REPO}").partition("/")
-    data = graphql("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
-                   "discussions(first:100,states:[OPEN],orderBy:{field:CREATED_AT,direction:DESC}){"
-                   "nodes{title body url createdAt authorAssociation}}}}", owner=owner, name=name)
-    if data is None:
+    repo = repository(owner, name, "discussions(first:100,states:[OPEN],orderBy:{field:CREATED_AT,direction:DESC}){"
+                                   "nodes{title body url createdAt authorAssociation}}")
+    if repo is None:
         return None
     found = []
-    for thread in ((data.get("repository") or {}).get("discussions") or {}).get("nodes") or []:
+    for thread in (repo.get("discussions") or {}).get("nodes") or []:
         match = MARK.search(thread.get("body") or "")
         if not match or thread.get("authorAssociation") not in WRITERS:
             continue
@@ -1128,8 +1146,11 @@ TRANSLATE_URL = "https://api.deepseek.com/chat/completions"
 TRANSLATE_KEY = os.environ.get("DEEPSEEK_API_KEY") or ""
 TRANSLATE_MODEL = os.environ.get("DEEPSEEK_MODEL") or "deepseek-flash"
 TRANSLATE_MAX_CHARS = int(os.environ.get("TRANSLATE_MAX_CHARS") or 300_000)
-TRANSLATE_BATCH = 20     # posts sent in one request
-TRANSLATE_WORKERS = 4    # requests at a time
+TRANSLATE_BATCH = 20           # posts sent in one request, at most
+TRANSLATE_BATCH_CHARS = 5000   # and characters, so that what comes back fits in one answer
+TRANSLATE_WORKERS = 4          # requests at a time
+TRANSLATE_TIMEOUT = 90         # seconds to wait for one answer
+TRANSLATE_SECONDS = 300        # no request starts after this long: what is left waits for the next run
 PROMPT_VERSION = 1       # goes up when the prompt changes, so that everything is translated again
 LANGUAGES = {"zh": "Simplified Chinese", "en": "English"}
 PROMPT = """You translate the titles and summaries of blog posts for a reading list into {language}.
@@ -1153,66 +1174,70 @@ def translation_key(lang, title, summary):
     return hashlib.sha256(json.dumps([PROMPT_VERSION, lang, title, summary]).encode()).hexdigest()[:20]
 
 
-def known_translations(cache):
+def words(post):
+    """The title and summary of a post: what gets translated."""
+    return post["title"], post.get("summary") or ""
+
+
+def known_translations():
     """The translations the previous list carries, by what they are translations of."""
     known = {}
-    for of in ((cache or {}), (cache or {}).get("discover") or {}):
-        for blog in of.get("blogs") or []:
-            for post in blog["posts"]:
-                tr = post.get("tr")
-                if isinstance(tr, dict) and tr.get("lang") in LANGUAGES and tr.get("title"):
-                    known[translation_key(tr["lang"], post["title"], post.get("summary") or "")] = tr
+    for blog in BLOGS.values():
+        for post in blog["posts"]:
+            tr = post.get("tr")
+            if isinstance(tr, dict) and tr.get("lang") in LANGUAGES and tr.get("title"):
+                known[translation_key(tr["lang"], *words(post))] = tr
     return known
 
 
 def ask_deepseek(items, lang):
     """Translates {id: {"title", "summary"}} into `lang`. Returns the ones that
-    came back well formed, in the same shape, and the tokens used; an empty
-    answer when the request failed. Raises Refused when the key is no good."""
-    payload = json.dumps({
-        "model": TRANSLATE_MODEL,
-        "messages": [{"role": "system", "content": PROMPT.replace("{language}", LANGUAGES[lang])},
-                     {"role": "user", "content": json.dumps(items, ensure_ascii=False)}],
-        "thinking": {"type": "disabled"}, "max_tokens": 8192, "stream": False,
-    }).encode()
+    came back well formed, in the same shape; the tokens used; and whether the
+    rest is worth asking for again in smaller pieces, which it is when DeepSeek
+    turned the request down as it stands or its answer was cut short. Raises
+    Refused when the key is no good."""
+    body = {"model": TRANSLATE_MODEL,
+            "messages": [{"role": "system", "content": PROMPT.replace("{language}", LANGUAGES[lang])},
+                         {"role": "user", "content": json.dumps(items, ensure_ascii=False)}],
+            "thinking": {"type": "disabled"}, "max_tokens": 8192, "stream": False}
+    unfit = (400, 413, 422)   # the request itself will not do
     for pause in (0, 5):
         time.sleep(pause)
-        request = urllib.request.Request(TRANSLATE_URL, data=payload, headers={
-            "Authorization": f"Bearer {TRANSLATE_KEY}", "Content-Type": "application/json", "User-Agent": USER_AGENT})
-        try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                reply = json.loads(response.read())
-            text = reply["choices"][0]["message"]["content"]
-            answer = json.loads(text[text.index("{"):text.rindex("}") + 1])   # with or without a code fence around it
-        except urllib.error.HTTPError as error:
-            if error.code in (401, 402):
-                raise Refused("the key was not accepted" if error.code == 401 else "the account is out of credit") from None
-            continue
-        except Exception:
-            continue
-        done = {}
-        for name, source in items.items():
-            got = answer.get(name) if isinstance(answer, dict) else None
-            if isinstance(got, dict) and short(got.get("title"), 300) and isinstance(got.get("summary", ""), str):
-                done[name] = {"lang": lang, "title": short(got["title"], 300),
-                              "summary": short(got.get("summary", ""), 600) if source["summary"] else ""}
-        usage = reply.get("usage") or {}
-        return done, usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
-    return {}, 0
+        reply, refused = post_json(TRANSLATE_URL, body, TRANSLATE_KEY, timeout=TRANSLATE_TIMEOUT, limit=None)
+        if refused in (401, 402):
+            raise Refused("the key was not accepted" if refused == 401 else "the account is out of credit")
+        if reply is not None or refused is None or refused in unfit:
+            break   # an answer, silence, or a plain no: the same again would get the same
+    if reply is None and refused not in unfit:
+        return {}, 0, False   # no answer today
+    try:
+        text = reply["choices"][0]["message"]["content"]
+        answer = json.loads(text[text.index("{"):text.rindex("}") + 1])   # with or without a code fence around it
+    except Exception:
+        answer = None   # turned down, or cut short
+    done = {}
+    for name, source in items.items():
+        got = answer.get(name) if isinstance(answer, dict) else None
+        if isinstance(got, dict) and short(got.get("title"), 300) and isinstance(got.get("summary", ""), str):
+            done[name] = {"lang": lang, "title": short(got["title"], 300),
+                          "summary": short(got.get("summary", ""), 600) if source["summary"] else ""}
+    usage = (reply.get("usage") if isinstance(reply, dict) else None) or {}
+    return done, usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0), True
 
 
-def translate(blogs, cache):
+def translate(blogs):
     """Gives each post its translation: the one made before where its words
     have not changed, and a new one from DeepSeek where a key is set. A post
     that cannot be translated today simply goes without until next time."""
-    known, waiting, reused = known_translations(cache), {"zh": [], "en": []}, 0
+    known, waiting, reused = known_translations(), {"zh": [], "en": []}, 0
     for blog in blogs:
         for post in blog["posts"]:
             post.pop("tr", None)
-            lang = target_language(f"{post['title']}\n{post.get('summary') or ''}")
+            title, summary = words(post)
+            lang = target_language(f"{title}\n{summary}")
             if not lang:
                 continue
-            key = translation_key(lang, post["title"], post.get("summary") or "")
+            key = translation_key(lang, title, summary)
             if key in known:
                 post["tr"], reused = known[key], reused + 1
             else:
@@ -1222,26 +1247,45 @@ def translate(blogs, cache):
         if reused:
             print(f"translation: {reused} kept from before, {left} new ones waiting for a DeepSeek key")
         return
-    # The newest first, in batches, and no more characters in all than the limit for one run
+    # The newest first, and no more characters in all than the limit for one
+    # run. A batch is as many posts as will fit in one answer.
     batches, budget = [], TRANSLATE_MAX_CHARS
     for lang, posts in waiting.items():
         posts.sort(key=lambda post: post["ts"], reverse=True)
-        fitting = []
+        batch, size = [], 0
         for post in posts:
-            budget -= len(post["title"]) + len(post.get("summary") or "")
+            length = sum(map(len, words(post)))
+            budget -= length
             if budget < 0:
                 break
-            fitting.append(post)
-        batches += [(lang, fitting[start:start + TRANSLATE_BATCH]) for start in range(0, len(fitting), TRANSLATE_BATCH)]
+            if batch and (len(batch) == TRANSLATE_BATCH or size + length > TRANSLATE_BATCH_CHARS):
+                batches.append((lang, batch))
+                batch, size = [], 0
+            batch.append(post)
+            size += length
+        if batch:
+            batches.append((lang, batch))
+    deadline = time.time() + TRANSLATE_SECONDS
 
     def ask(batch):
+        """Translates a batch. What does not come back is asked for again in
+        halves, down to single posts, so that one post DeepSeek will not take,
+        or an answer cut short, does not hold back the posts sent with it."""
         lang, posts = batch
-        items = {str(index): {"title": post["title"], "summary": post.get("summary") or ""} for index, post in enumerate(posts)}
-        done, tokens = ask_deepseek(items, lang)
+        if time.time() > deadline:
+            return 0, 0
+        done, tokens, again = ask_deepseek(
+            {str(index): dict(zip(("title", "summary"), words(post))) for index, post in enumerate(posts)}, lang)
         for index, post in enumerate(posts):
             if str(index) in done:
                 post["tr"] = done[str(index)]
-        return len(done), tokens
+        made, rest = len(done), [post for index, post in enumerate(posts) if str(index) not in done]
+        if again and rest and len(posts) > 1:
+            half = (len(rest) + 1) // 2
+            for part in filter(None, (rest[:half], rest[half:])):
+                more, used = ask((lang, part))
+                made, tokens = made + more, tokens + used
+        return made, tokens
 
     made = tokens = 0
     try:
@@ -1369,7 +1413,7 @@ def collect(cache, state):
         if key not in NEW and time.time() - entry.get("checked", 0) < FORGET:
             NEW[key] = entry
     blogs = dated(within_budget(blogs))
-    translate(blogs + ((found or {}).get("blogs") or []), cache)
+    translate(blogs + ((found or {}).get("blogs") or []))
     return {"updated": iso(time.time()),
             "owner": {"login": owner["login"], "name": name, "avatar": owner["avatarUrl"], "url": owner["url"]},
             "title": os.environ.get("FOLLOWING_TITLE") or name,
