@@ -79,7 +79,7 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
 HERE = Path(__file__).resolve().parent
-VERSION = "1.1.0"                 # goes up with every release
+VERSION = "1.1.1"                 # goes up with every release
 UPSTREAM = "Ki-Seki/followroll"   # where the releases are published
 API_URL = "https://api.github.com/graphql"
 USER_AGENT = f"Mozilla/5.0 (compatible; followroll/{VERSION}; +https://github.com/{UPSTREAM})"
@@ -980,8 +980,9 @@ def roll_of(person):
     known from before."""
     key, now = person["login"].lower(), int(time.time())
     known = OLD_ROLLS.get(key)
-    # Someone without a page is asked again after a few days, spread out by name.
-    if known and not known.get("page") and now - known["checked"] < (3 + zlib.crc32(key.encode()) % 4) * 86400:
+    # Someone without a page is asked again about a day later, spread out by
+    # name: a page made today should show in its followers' pages tomorrow.
+    if known and not known.get("page") and now - known["checked"] < (20 + zlib.crc32(key.encode()) % 6) * 3600:
         return known
     status, final, body, validators = fetch(roll_address(key) + "reposts.json", (known or {}).get("validators"))
     if status == "same":

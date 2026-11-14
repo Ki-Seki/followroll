@@ -1,4 +1,6 @@
 name: Following
+# A run started by a repost says so in the list of runs: "Repost created"
+run-name: ${{ github.event_name == 'discussion' && format('Repost {0}', github.event.action) || '' }}
 
 on:
   # Every six hours, at minute 23
@@ -9,8 +11,11 @@ on:
     branches:
       - main
   # A repost is a discussion in this repository, so the page is rebuilt when
-  # one is started, changed or deleted.
+  # one is started, changed or deleted. GitHub reports other things about a
+  # discussion too, more than one of them when it is started; none of those
+  # changes what was reposted.
   discussion:
+    types: [created, edited, deleted]
 
 permissions:
   contents: read
