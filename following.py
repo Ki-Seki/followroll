@@ -3,9 +3,11 @@
 
 For each followed account the script looks for a personal site (the website on
 the GitHub profile, then <login>.github.io), finds its feed, and keeps it only
-when the site is that person's own: it is their GitHub Pages site, their Pages
-repository's CNAME points at it, or its home page links back to their GitHub
-profile. Nobody has to opt in or change anything on their blog.
+when the feed is that person's own writing: the site is their GitHub Pages
+site, its address carries their name, their Pages repository's CNAME points at
+it, or it links back to their GitHub profile. A profile on someone else's site
+is not enough to make that site's blog theirs. Nobody has to opt in or change
+anything on their blog.
 
 Comment and reaction counts are read wherever that works without logging in:
 GitHub Discussions (giscus), GitHub Issues (utterances, gitalk), Disqus and
@@ -34,6 +36,11 @@ why the repository has to keep its name.
 Each copy knows its own version (VERSION below) and asks which release of
 followroll is the latest, so the page can say when it is time to sync the fork.
 
+With a DeepSeek key in the environment, the titles and summaries of posts are
+translated as well, Chinese ones into English and the rest into Chinese, so
+that a reader of either language can read the whole list. Words translated
+before are not sent again: the translations ride along in following.json.
+
 A run may add to the list and update it, but a request that fails never takes
 anything away: a blog that can't be read keeps its last entry (for two weeks),
 a count that can't be read keeps its last value, and Discover keeps its last
@@ -52,6 +59,9 @@ Environment (an empty value counts as unset):
   FOLLOWING_DISCOVER        how many second-degree accounts not seen before each
                             run looks at for Discover; 0 turns it off (default: 200)
   FOLLOWING_WORKERS         concurrent sites (default: 24)
+  DEEPSEEK_API_KEY          turns translation on; without it nothing is sent anywhere
+  DEEPSEEK_MODEL            the model asked to translate (default: deepseek-flash)
+  TRANSLATE_MAX_CHARS       most characters sent for translation in one run (default: 300000)
 """
 
 import argparse
@@ -79,7 +89,7 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
 HERE = Path(__file__).resolve().parent
-VERSION = "1.1.1"                 # goes up with every release
+VERSION = "1.2.0"                 # goes up with every release
 UPSTREAM = "Ki-Seki/followroll"   # where the releases are published
 API_URL = "https://api.github.com/graphql"
 USER_AGENT = f"Mozilla/5.0 (compatible; followroll/{VERSION}; +https://github.com/{UPSTREAM})"
@@ -406,6 +416,14 @@ def read_feed(url, validators=None):
     return (final, posts, authors, fresh) if posts else None
 
 
+class Elsewhere:
+    """What find_feed returns when a profile link leads to an account on
+    someone else's platform: no feed, and no use keeping one found there before."""
+    def __bool__(self):
+        return False
+
+
+ELSEWHERE = Elsewhere()
 BLOG_PATH = re.compile(r"^/(blog|posts?|writing|articles?|notes|essays)/?$", re.I)
 
 
@@ -416,13 +434,17 @@ def declared_feeds(base, tags):
 
 
 def find_feed(site):
-    """Returns (feed URL, posts, home page text, author names, validators) for a site.
+    """Returns (feed URL, posts, home page text, author names, validators,
+    the page's address after any redirects) for a site.
 
     None means the site gave no usable answer (try again soon); False means
-    it answered and has no feed."""
+    it answered and has no feed; ELSEWHERE, false as well, means the link
+    leads on to an account on someone else's platform."""
     status, base, body, _ = fetch(site)
     if status != "ok":
         return False if status == "gone" else None
+    if is_platform(base):
+        return ELSEWHERE
     home = text_of(body)
     tags = Tags(home)
     # Then the usual paths at the site root, except on shared hosts
@@ -433,7 +455,7 @@ def find_feed(site):
     for url in dict.fromkeys(declared_feeds(base, tags) + [urljoin(root, path) for path in FEED_PATHS]):
         feed = read_feed(url)
         if feed:
-            return feed[0], feed[1], home, feed[2], feed[3]
+            return feed[0], feed[1], home, feed[2], feed[3], base
     # A landing page with the blog one level down: follow its "Blog" link.
     for href in dict.fromkeys(tags.anchors):
         page = urljoin(base, href)
@@ -443,7 +465,7 @@ def find_feed(site):
         for url in declared_feeds(response[0], Tags(text_of(response[1]))) if response else []:
             feed = read_feed(url)
             if feed:
-                return feed[0], feed[1], home, feed[2], feed[3]
+                return feed[0], feed[1], home, feed[2], feed[3], base
         break
     return False
 
@@ -733,27 +755,62 @@ def squash(text):
     return re.sub(r"[\W_]+", "", (text or "").lower())
 
 
-def is_own_site(person, site, home, authors):
-    """Whether a site is this account's own rather than, say, their employer's."""
+def belongs(page, feed):
+    """Whether a feed is this page's own rather than that of the whole host
+    the page sits on: medium.com/@them and medium.com/feed/@them, but not
+    example.com/people/them and example.com/blog/feed.xml."""
+    path = urlparse(page).path.rstrip("/").lower()
+    if not path:
+        return True   # the front page speaks for its host
+    there = urlparse(feed).path.lower()
+    return host(page) == host(feed) and (there.startswith(path + "/") or path.rsplit("/", 1)[-1] in there.split("/"))
+
+
+def is_own_site(person, page, home, authors, feed):
+    """Whether a feed found from someone's site is their own writing rather
+    than, say, their employer's. None when that could not be found out today.
+
+    `page` is where their profile link really leads, after any redirects, and
+    `home` is what that page says."""
     login, name = person["login"].lower(), squash(person.get("name"))
-    if host(site) == f"{login}.github.io":
-        return True
-    # The home page links back to their GitHub profile
-    if re.search(rf"github\.com/{re.escape(login)}(?![\w-])", home.lower()):
+    carries = lambda text: (len(squash(login)) >= 4 and squash(login) in text) or (len(name) >= 5 and name in text)
+    if is_platform(page):
+        return False   # an account on someone else's platform, whatever it links to
+    if host(page) == f"{login}.github.io":
         return True
     # The address carries their login or name: danluu.com, simonwillison.net
-    address = squash(host(site))
-    if (len(squash(login)) >= 4 and squash(login) in address) or (len(name) >= 5 and name in address):
+    if carries(squash(host(page))):
         return True
     # The feed names them, and nobody else, as its author. A feed with several
     # authors is a team's or a company's blog.
     if len(name) >= 4 and authors and all(name in author or (len(author) >= 4 and author in name) for author in authors):
         return True
+    # Their own corner of a host they share, with a feed of its own: dev.to/them
+    own = belongs(page, feed)
+    if own and carries(squash(urlparse(page).path)):
+        return True
+    # The page links back to their GitHub profile. On a page that is one of
+    # many on its host, with a feed that is the host's and not the page's,
+    # that says whose page it is, not whose feed: a profile on a company's
+    # site sits beside the company's blog. There the host's front page has to
+    # point back at them too.
+    back = re.compile(rf"github\.com/{re.escape(login)}(?![\w-])")
+    if back.search(home.lower()):
+        if own:
+            return True
+        parts = urlparse(page)
+        status, _, body, _ = fetch(f"{parts.scheme}://{parts.netloc}/")
+        if status == "ok" and back.search(text_of(body).lower()):
+            return True
+        if status == "fail":
+            return None
     # Their Pages repository's CNAME points at the site
     data = graphql('query($owner:String!,$name:String!){repository(owner:$owner,name:$name){'
                    'object(expression:"HEAD:CNAME"){... on Blob{text}}}}', owner=login, name=f"{login}.github.io")
-    cname = (((data or {}).get("repository") or {}).get("object") or {}).get("text") or ""
-    return cname.strip().lower().removeprefix("www.") == host(site)
+    if data is None:
+        return None
+    cname = ((data.get("repository") or {}).get("object") or {}).get("text") or ""
+    return cname.strip().lower().removeprefix("www.") == host(page)
 
 
 def months(dates):
@@ -772,6 +829,7 @@ BLOGS = {}           # login -> its blog entry in the previous list
 SEEN = set()         # addresses of the posts in the previous list
 
 
+RULES = 2                # goes up when the test for whose blog a site is gets stricter
 KEEP_DOWN = 14 * 86400   # how long a blog that can't be read stays on the list
 FORGET = 90 * 86400      # how long an account not looked at stays remembered
 
@@ -869,22 +927,31 @@ def blog_of(person, full=True):
     known = OLD.get(key)
     if known and known.get("website") == website:
         if known.get("feed"):
-            blog = revisit(person, known, full)
-            if blog:
-                return blog
+            # A blog let in under an older, laxer test is not taken on trust:
+            # it is looked at again from the start, below.
+            if known.get("rules", 1) >= RULES:
+                blog = revisit(person, known, full)
+                if blog:
+                    return blog
         elif time.time() - known["checked"] < patience(key, known.get("definite", True)):
             NEW[key] = known
             return None
-    answered = False
+    answered, refused = False, False
     for site in candidate_sites(person):
         found = find_feed(site)
         answered = answered or found is not None
+        refused = refused or found is ELSEWHERE
         if not found:
             continue
-        feed, posts, home, authors, validators = found
-        if not is_own_site(person, site, home, authors):
+        feed, posts, home, authors, validators, landed = found
+        own = is_own_site(person, landed, home, authors, feed)
+        if not own:
+            # Not theirs, or (None) no telling today, which counts as no answer.
+            refused, answered = refused or own is False, answered and own is False
             break
-        blog = new_blog(person, site, feed, posts)
+        # A blog known before keeps the older posts it has built up.
+        same = known and known.get("feed") == feed
+        blog = new_blog(person, site, feed, posts, (BLOGS.get(person["login"]) or {}).get("posts", []) if same else ())
         # The newest post's page tells where the blog's comments live.
         response = get(blog["posts"][0]["url"])
         page = text_of(response[1]) if response else None
@@ -892,12 +959,14 @@ def blog_of(person, full=True):
         if comments:
             read_threads(blog["posts"][:COUNTED_POSTS], comments, page)
         NEW[key] = {"website": website, "checked": int(time.time()), "site": site, "feed": feed,
-                    "validators": validators, "comments": comments,
-                    "dates": recent_dates([post["ts"] for post in posts]), "full": full, "whole": True}
+                    "validators": validators, "comments": comments, "rules": RULES,
+                    "dates": recent_dates((known.get("dates") or []) if same else [], [post["ts"] for post in posts]),
+                    "full": full, "whole": True}
         return blog
-    if known and known.get("feed") and known.get("website") == website:
+    if known and known.get("feed") and known.get("website") == website and not refused:
         # A blog found before can't be read today. It stays as it was, and is
         # tried again next time; only after two weeks of this is it let go.
+        # (One that turned out not to be theirs goes at once.)
         since = known.get("failing") or int(time.time())
         NEW[key] = {**known, "failing": since}
         before = BLOGS.get(person["login"])
@@ -1050,6 +1119,140 @@ def is_newer(version, than):
     return numbers(version)[:3] > numbers(than)[:3]
 
 
+# --------------------------------------------------------- translation
+# Optional. With DEEPSEEK_API_KEY set, post titles and summaries are translated
+# when the page is built: Chinese into English, everything else into Chinese.
+# The page shows a post in the reader's language and lets them turn it back.
+
+TRANSLATE_URL = "https://api.deepseek.com/chat/completions"
+TRANSLATE_KEY = os.environ.get("DEEPSEEK_API_KEY") or ""
+TRANSLATE_MODEL = os.environ.get("DEEPSEEK_MODEL") or "deepseek-flash"
+TRANSLATE_MAX_CHARS = int(os.environ.get("TRANSLATE_MAX_CHARS") or 300_000)
+TRANSLATE_BATCH = 20     # posts sent in one request
+TRANSLATE_WORKERS = 4    # requests at a time
+PROMPT_VERSION = 1       # goes up when the prompt changes, so that everything is translated again
+LANGUAGES = {"zh": "Simplified Chinese", "en": "English"}
+PROMPT = """You translate the titles and summaries of blog posts for a reading list into {language}.
+
+The input is a JSON object. Each value has a "title" and a "summary". Reply with a JSON object that has exactly the same keys, each value holding the "title" and the "summary" translated into {language}. Translate faithfully and naturally, the way a careful human translator would. Leave code, product names, numbers and URLs as they are, and keep people's names written in Latin letters exactly as they are: never turn a pinyin name into Chinese characters. A summary may be cut off mid-sentence: translate what is there and keep its trailing "…". Keep an empty summary empty. Reply with the JSON object only."""
+
+
+class Refused(Exception):
+    """DeepSeek will not take requests on this key: it is wrong, or out of credit."""
+
+
+def target_language(text):
+    """Chinese text goes into English and everything else into Chinese; None when there is nothing to translate."""
+    han, words = len(re.findall(r"[\u4e00-\u9fff]", text)), len(re.findall(r"[A-Za-z]+", text))
+    if not han and not words:
+        return "zh" if re.search(r"[^\W\d_]", text) else None   # another script altogether
+    return "en" if han > words else "zh"
+
+
+def translation_key(lang, title, summary):
+    return hashlib.sha256(json.dumps([PROMPT_VERSION, lang, title, summary]).encode()).hexdigest()[:20]
+
+
+def known_translations(cache):
+    """The translations the previous list carries, by what they are translations of."""
+    known = {}
+    for of in ((cache or {}), (cache or {}).get("discover") or {}):
+        for blog in of.get("blogs") or []:
+            for post in blog["posts"]:
+                tr = post.get("tr")
+                if isinstance(tr, dict) and tr.get("lang") in LANGUAGES and tr.get("title"):
+                    known[translation_key(tr["lang"], post["title"], post.get("summary") or "")] = tr
+    return known
+
+
+def ask_deepseek(items, lang):
+    """Translates {id: {"title", "summary"}} into `lang`. Returns the ones that
+    came back well formed, in the same shape, and the tokens used; an empty
+    answer when the request failed. Raises Refused when the key is no good."""
+    payload = json.dumps({
+        "model": TRANSLATE_MODEL,
+        "messages": [{"role": "system", "content": PROMPT.replace("{language}", LANGUAGES[lang])},
+                     {"role": "user", "content": json.dumps(items, ensure_ascii=False)}],
+        "thinking": {"type": "disabled"}, "max_tokens": 8192, "stream": False,
+    }).encode()
+    for pause in (0, 5):
+        time.sleep(pause)
+        request = urllib.request.Request(TRANSLATE_URL, data=payload, headers={
+            "Authorization": f"Bearer {TRANSLATE_KEY}", "Content-Type": "application/json", "User-Agent": USER_AGENT})
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                reply = json.loads(response.read())
+            text = reply["choices"][0]["message"]["content"]
+            answer = json.loads(text[text.index("{"):text.rindex("}") + 1])   # with or without a code fence around it
+        except urllib.error.HTTPError as error:
+            if error.code in (401, 402):
+                raise Refused("the key was not accepted" if error.code == 401 else "the account is out of credit") from None
+            continue
+        except Exception:
+            continue
+        done = {}
+        for name, source in items.items():
+            got = answer.get(name) if isinstance(answer, dict) else None
+            if isinstance(got, dict) and short(got.get("title"), 300) and isinstance(got.get("summary", ""), str):
+                done[name] = {"lang": lang, "title": short(got["title"], 300),
+                              "summary": short(got.get("summary", ""), 600) if source["summary"] else ""}
+        usage = reply.get("usage") or {}
+        return done, usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+    return {}, 0
+
+
+def translate(blogs, cache):
+    """Gives each post its translation: the one made before where its words
+    have not changed, and a new one from DeepSeek where a key is set. A post
+    that cannot be translated today simply goes without until next time."""
+    known, waiting, reused = known_translations(cache), {"zh": [], "en": []}, 0
+    for blog in blogs:
+        for post in blog["posts"]:
+            post.pop("tr", None)
+            lang = target_language(f"{post['title']}\n{post.get('summary') or ''}")
+            if not lang:
+                continue
+            key = translation_key(lang, post["title"], post.get("summary") or "")
+            if key in known:
+                post["tr"], reused = known[key], reused + 1
+            else:
+                waiting[lang].append(post)
+    left = sum(len(posts) for posts in waiting.values())
+    if not TRANSLATE_KEY:
+        if reused:
+            print(f"translation: {reused} kept from before, {left} new ones waiting for a DeepSeek key")
+        return
+    # The newest first, in batches, and no more characters in all than the limit for one run
+    batches, budget = [], TRANSLATE_MAX_CHARS
+    for lang, posts in waiting.items():
+        posts.sort(key=lambda post: post["ts"], reverse=True)
+        fitting = []
+        for post in posts:
+            budget -= len(post["title"]) + len(post.get("summary") or "")
+            if budget < 0:
+                break
+            fitting.append(post)
+        batches += [(lang, fitting[start:start + TRANSLATE_BATCH]) for start in range(0, len(fitting), TRANSLATE_BATCH)]
+
+    def ask(batch):
+        lang, posts = batch
+        items = {str(index): {"title": post["title"], "summary": post.get("summary") or ""} for index, post in enumerate(posts)}
+        done, tokens = ask_deepseek(items, lang)
+        for index, post in enumerate(posts):
+            if str(index) in done:
+                post["tr"] = done[str(index)]
+        return len(done), tokens
+
+    made = tokens = 0
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=TRANSLATE_WORKERS) as pool:
+            for count, used in pool.map(ask, batches):
+                made, tokens = made + count, tokens + used
+    except Refused as refusal:
+        print(f"::warning::Posts were not translated: DeepSeek says {refusal}.")
+    print(f"translation: {reused} kept from before, {made} new ({tokens} tokens, {TRANSLATE_MODEL}), {left - made} still waiting")
+
+
 # ---------------------------------------------------------------- main
 
 def previous_url(name):
@@ -1165,11 +1368,13 @@ def collect(cache, state):
     for key, entry in OLD.items():
         if key not in NEW and time.time() - entry.get("checked", 0) < FORGET:
             NEW[key] = entry
+    blogs = dated(within_budget(blogs))
+    translate(blogs + ((found or {}).get("blogs") or []), cache)
     return {"updated": iso(time.time()),
             "owner": {"login": owner["login"], "name": name, "avatar": owner["avatarUrl"], "url": owner["url"]},
             "title": os.environ.get("FOLLOWING_TITLE") or name,
             "following": total, "looked_at": len(people) - 1,
-            "blogs": dated(within_budget(blogs)), "discover": found, "reposts": reposts, "rolls": pages,
+            "blogs": blogs, "discover": found, "reposts": reposts, "rolls": pages,
             "latest": latest}
 
 

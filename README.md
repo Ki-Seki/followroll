@@ -7,26 +7,22 @@ See what the people you follow on GitHub are writing.
 
 <sub>The screenshot shows made-up sample data.</sub>
 
-It reads who you follow, finds their blogs on its own, and lists their latest
-posts. A Discover tab shows blogs one step further out: people followed by the
-people you follow. You can repost what you like, and the reposts of people
-you follow show up in your timeline. Nobody has to sign up, and there is no
+It finds the blogs of the people you follow on its own and lists their latest
+posts, with a Discover tab for blogs one step further out. You can repost, and
+you see what the people you follow repost. Nobody signs up and there is no
 server: it runs on GitHub Actions and GitHub Pages.
 
 ## Get your own
 
-1. **Fork** this repository.
-2. Open the **Actions** tab of your fork and enable workflows.
-3. Open **Settings → Pages** and set **Source** to **GitHub Actions**.
-4. In **Actions**, open the **Following** workflow. If GitHub says its
-   schedule is disabled in forks, press **Enable workflow**. Then press
-   **Run workflow**.
+**[Follow the five steps](https://ki-seki.github.io/followroll/#how-do-i-make-my-own)**:
+fork, then four presses on GitHub, each shown with a picture. Your page
+appears at `https://<you>.github.io/followroll/`.
 
-Your page appears at `https://<you>.github.io/followroll/` and refreshes every
-six hours. When a new [release](https://github.com/Ki-Seki/followroll/releases)
-is out, a dot appears beside **followroll** at the top of your page: press
-**Sync fork** on your repository to get it.
-
-Keep the repository's name: followroll pages find each other by it. To repost,
-also turn on **Discussions** under **Settings → General**: a repost is saved
-as a discussion in your own repository.
+- Keep the repository's name: pages find each other by it.
+- To repost, turn on **Discussions** in your repository's settings.
+- To have posts translated between Chinese and English, add a
+  [DeepSeek](https://platform.deepseek.com) key as a repository secret named
+  `DEEPSEEK_API_KEY`.
+- When a new [release](https://github.com/Ki-Seki/followroll/releases) is
+  out, a dot appears on the settings icon of your page: on GitHub, press
+  **Sync fork**, then **Update branch**.

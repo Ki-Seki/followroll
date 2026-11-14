@@ -46,6 +46,9 @@ jobs:
           FOLLOWING_TITLE: ${{ vars.FOLLOWING_TITLE }}
           FOLLOWING_MAX_PEOPLE: ${{ vars.FOLLOWING_MAX_PEOPLE }}
           FOLLOWING_DISCOVER: ${{ vars.FOLLOWING_DISCOVER }}
+          # Optional: with this secret set, posts are translated (see the README)
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL }}
         run: python3 following.py --output _site
       - uses: actions/upload-pages-artifact@v3
       - name: Keep the schedule alive
