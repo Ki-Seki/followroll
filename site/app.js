@@ -33,7 +33,8 @@ const keep = {
 const data = JSON.parse(document.getElementById('data').textContent);
 const app = document.getElementById('app');
 const narrow = matchMedia('(max-width: 880px)');
-const state = { view: 'following', who: null, shown: PAGE, everyone: false, step: 0, went: false };
+const ORDERS = ['latest', 'top', 'lucky'];
+const state = { view: 'following', who: null, order: 'latest', shown: PAGE, everyone: false, step: 0, went: false };
 
 // ------------------------------------------------------------- words
 // Everything the page says, in English and in Chinese. A few entries carry
@@ -46,7 +47,9 @@ const WORDS = {
     showAll: n => `Show all ${n}`, more: n => `Show ${n} more`,
     empty: 'Nothing here yet.',
     emptyFollowing: n => `None of the ${n} people followed here has a blog that could be found yet.`,
-    week: 'This week', month: 'This month', year: 'This year', inYear: y => String(y),
+    week: 'Past week', month: 'Past month', year: 'Past year', inYear: y => String(y), allTime: 'All time',
+    order: 'Order', orders: { latest: 'Latest', top: 'Top', lucky: 'Lucky' },
+    orderSays: { latest: 'Newest first', top: 'Most liked, discussed and reposted first', lucky: 'In no particular order. Press again for another' },
     short: (n, unit) => `${n}${unit}`,
     and: (a, b) => `${a} and ${b}`, andMore: (list, more) => `${list} and ${more} more`, comma: ', ',
     reposted: who => `${who} reposted`, repostedSolo: 'Reposted',
@@ -111,7 +114,9 @@ const WORDS = {
     showAll: n => `显示全部 ${n} 位`, more: n => `再显示 ${n} 篇`,
     empty: '这里还没有内容。',
     emptyFollowing: n => `在关注的 ${n} 个人里，还没找到有博客的。`,
-    week: '本周', month: '本月', year: '今年', inYear: y => `${y} 年`,
+    week: '近一周', month: '近一月', year: '近一年', inYear: y => `${y} 年`, allTime: '全部时间',
+    order: '排序', orders: { latest: '最新', top: '最热', lucky: '手气不错' },
+    orderSays: { latest: '新的在前', top: '赞、评论和转发多的在前', lucky: '随机排列，再点一次换一批' },
     short: (n, unit) => `${n} ${{ m: '分钟', h: '小时', d: '天', mo: '个月' }[unit]}前`,
     and: (a, b) => `${a} 和 ${b}`, andMore: (list, more, all) => `${list} 等 ${all} 人`, comma: '、',
     reposted: who => `${who} 转发了`, repostedSolo: '转发了',
@@ -264,8 +269,9 @@ const ICON = {
 };
 
 // ------------------------------------------------------------ what is known
-// The address keeps the view and the person: #discover, #by=login, #discover&by=login;
-// or one of the questions in About, which opens About at that question.
+// The address keeps the view, the person and the order: #discover, #by=login,
+// #discover&by=login&sort=top; or one of the questions in About, which opens
+// About at that question.
 const ASK = { page: 'what-is-this-page', discover: 'what-is-discover', make: 'how-do-i-make-my-own' };
 function readHash() {
   const q = new URLSearchParams(location.hash.slice(1)), who = personOf(q.get('by'));
@@ -274,10 +280,12 @@ function readHash() {
   state.who = who && !page ? who.login : null;
   // a person is shown on the list they are on
   state.view = page || (state.who ? who.view : q.has('discover') && data.discover ? 'discover' : 'following');
+  state.order = ORDERS.includes(q.get('sort')) ? q.get('sort') : 'latest';
   return at;
 }
 function writeHash() {
-  const parts = [state.view === 'following' ? '' : state.view, state.who ? `by=${encodeURIComponent(state.who)}` : ''].filter(Boolean);
+  const parts = [state.view === 'following' ? '' : state.view, state.who ? `by=${encodeURIComponent(state.who)}` : '',
+    state.order === 'latest' ? '' : `sort=${state.order}`].filter(Boolean);
   history.replaceState(null, '', parts.length ? '#' + parts.join('&') : location.pathname + location.search);
 }
 
@@ -290,7 +298,7 @@ for (const r of data.reposts || []) {
   const group = reposted.get(key(r.url)) || [];
   if (!group.some(q => same(q.by.login, r.by.login))) reposted.set(key(r.url), [...group, r]);
 }
-const asItem = group => ({ reposts: group, ts: group[0].ts, date: group[0].date });
+const asItem = group => ({ reposts: group, ts: group[0].ts, date: group[0].date, seen: group[0].seen });
 // The posts on this page by address: they say more than a repost carries.
 const known = new Map();
 const everyBlog = [data.discover, data].flatMap(of => (of ? of.blogs : []));   // the owner's own list has the last word
@@ -314,13 +322,14 @@ function toPerson(login) {
   return login ? `href="${github(login)}" target="_blank" rel="noopener" title="${esc(t('onGitHub', login))}"` : '';
 }
 
-// What was already here on the reader's last visit, so that what has come
-// since can be marked. The mark stays for the whole of this visit.
+// When the page the reader saw on their last visit was built, so that what
+// has come since can be marked. A post counts from when it came onto the page,
+// which can be hours after the date it carries. The mark stays for the whole
+// of this visit.
 const SEEN = `followroll:seen:${data.owner.login.toLowerCase()}`;
 const lastSeen = Number(keep.get(SEEN)) || 0;
 const everyPost = everyBlog.flatMap(b => b.posts);
-const newest = everyPost.concat(data.reposts || []).reduce((latest, item) => Math.max(latest, item.ts), 0);
-const leave = () => keep.set(SEEN, String(newest));
+const leave = () => keep.set(SEEN, String(Math.floor(Date.parse(data.updated) / 1000) || 0));
 window.addEventListener('pagehide', leave);
 document.addEventListener('visibilitychange', () => { if (document.hidden) leave(); });
 
@@ -389,13 +398,70 @@ function repostButton(p) {
 
 // ------------------------------------------------------------ the lists
 // Every post of a list, newest first, each with its author; on the owner's
-// own list, the reposts as well. Worked out once.
+// own list, the reposts as well, and a post that was reposted shows once
+// there: as the repost. Worked out once.
 function timeline(of) {
   of.timeline ??= of.blogs.flatMap(b => b.posts.map(p => ({ ...p, login: b.login, name: b.name, avatar: b.avatar })))
+    .filter(p => of !== data || !reposted.has(key(p.url)))
     .concat(of === data ? [...reposted.values()].map(asItem) : [])
     .sort((a, b) => b.ts - a.ts);
   return of.timeline;
 }
+
+// ------------------------------------------------------------ in what order
+// What was made of a post: its likes and comments, its points on Hacker News,
+// and above all a repost by someone here.
+function score(item) {
+  const url = (item.reposts ? item.reposts[0] : item).url, p = item.reposts ? known.get(key(url)) || {} : item;
+  return (p.thread ? (p.thread.likes || 0) + (p.thread.comments || 0) : 0) + (p.hn ? p.hn.points || 0 : 0)
+    + 10 * (reposted.get(key(url)) || []).length;
+}
+function byScore(items) {
+  const scores = new Map(items.map(item => [item, score(item)]));
+  return [...items].sort((a, b) => scores.get(b) - scores.get(a) || b.ts - a.ts);
+}
+
+// Numbers that look random and come out the same again for the same seed, so
+// that a shuffled list is still in its order when it is drawn again.
+function dice(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let n = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    n = (n + Math.imul(n ^ (n >>> 7), 61 | n)) ^ n;
+    return ((n ^ (n >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function shuffled(items, random) {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+// In no particular order, a round at a time: each round takes one thing from
+// everyone who still has one, be it a post of theirs or something they
+// reposted, so that someone who writes or reposts a lot does not crowd out
+// the rest. One person's own list is simply shuffled.
+function dealt(items, seed) {
+  const random = dice(seed), hands = new Map(), out = [];
+  for (const item of shuffled(items, random)) {
+    const whose = item.reposts ? item.reposts[0].by.login : item.login;
+    if (!hands.has(whose)) hands.set(whose, []);
+    hands.get(whose).push(item);
+  }
+  for (let round = 0; out.length < items.length; round++)
+    out.push(...shuffled([...hands.values()].filter(hand => hand[round]).map(hand => hand[round]), random));
+  return out;
+}
+const deal = () => { state.seed = Math.floor(Math.random() * 2 ** 32); };
+deal();
+
+// The orders a list can be read in, at the far end of its first line. An
+// order is chosen for the list on screen: another list, or another person,
+// opens newest first again. The lucky one, pressed again, deals afresh.
+const orderHTML = (orders, on) => `<span class="order" role="group" aria-label="${esc(t('order'))}">${orders.map(order =>
+  `<button type="button" data-order="${order}" aria-pressed="${order === on}" title="${esc(t('orderSays')[order])}"${order === on ? ' class="on"' : ''}>${t('orders')[order]}</button>`).join('')}</span>`;
 
 // Likes and comments wherever they could be counted, plus the Hacker News thread.
 function statsHTML(p) {
@@ -414,7 +480,7 @@ function infoHTML(p) {
   const flip = w.tr ? `<button class="flip${w.on ? ' on' : ''}" type="button" data-flip="${esc(key(p.url))}" aria-pressed="${w.on}" ${named(t(w.on ? 'trShown' : 'trHidden'))}>${ICON.translate}</button>` : '';
   return `<div class="info">${repostButton(p)}${statsHTML(p)}${flip}</div>`;
 }
-const freshHTML = ts => (lastSeen && ts > lastSeen ? `<i class="new" title="${esc(t('fresh'))}"></i>` : '');
+const freshHTML = item => (lastSeen && (item.seen || item.ts) > lastSeen ? `<i class="new" title="${esc(t('fresh'))}"></i>` : '');
 const faceHTML = (person, size) => `<img src="${link(person.avatar)}" alt="" width="${size}" height="${size}" loading="lazy">`;
 
 // A post's title, which opens it, and its summary, in the language they are shown in
@@ -430,7 +496,7 @@ function postHTML(p, blog, solo) {
   return `<article class="post${solo ? ' solo' : ''}">
 ${solo ? '' : `<a class="av" ${toPerson(p.login)} tabindex="-1" aria-hidden="true">${faceHTML(p, 36)}</a>`}
 <div>
-<div class="by">${solo ? '' : `<a class="who" ${toPerson(p.login)}>${esc(p.name)}</a>`}${time(p.date)}${freshHTML(p.ts)}${why}</div>
+<div class="by">${solo ? '' : `<a class="who" ${toPerson(p.login)}>${esc(p.name)}</a>`}${time(p.date)}${freshHTML(p)}${why}</div>
 ${wordsHTML(p)}
 ${infoHTML(p)}
 </div></article>`;
@@ -447,7 +513,7 @@ function repostHTML(item, solo) {
   return `<article class="post repost${solo ? ' solo' : ''}">
 ${solo ? '' : `<a class="av" ${toPerson(r.by.login)} tabindex="-1" aria-hidden="true">${faceHTML(r.by, 36)}</a>`}
 <div>
-<div class="by"><b>${solo ? t('repostedSolo') : t('reposted', who)}</b>${time(item.date)}${freshHTML(item.ts)}</div>
+<div class="by"><b>${solo ? t('repostedSolo') : t('reposted', who)}</b>${time(item.date)}${freshHTML(item)}</div>
 ${notes}
 <div class="quote">
 <div class="by"><a class="who" ${toPerson(p.login)}>${p.avatar ? faceHTML(p, 20) : ''}${esc(p.name)}</a>${p.date ? time(p.date) : ''}</div>
@@ -472,22 +538,31 @@ ${b && b.via ? `<p>${esc(t('followedBy', names(b.via, b.via_count)))}</p>` : ''}
 }
 
 function feedHTML() {
-  const { blogs } = list(), everything = timeline(list());
+  const { blogs } = list(), who = personOf(state.who), meeting = state.view === 'discover' && !who;
   const byLogin = new Map(blogs.map(b => [b.login, b]));
-  const who = personOf(state.who);
-  let posts = everything;
   // One person: what they wrote and, on the owner's list, what they reposted.
-  if (who) posts = (who.blog ? who.blog.posts : []).map(p => ({ ...p, login: who.login, name: who.name, avatar: who.avatar }))
-    .concat(state.view === 'following' ? (data.reposts || []).filter(r => same(r.by.login, who.login)).map(r => asItem([r])) : [])
-    .sort((a, b) => b.ts - a.ts);
-  // Discover is for meeting people: each shows their newest post only.
-  else if (state.view === 'discover') posts = everything.filter((p, i) => everything.findIndex(q => q.login === p.login) === i);
+  let posts = !who ? timeline(list())
+    : (who.blog ? who.blog.posts : []).map(p => ({ ...p, login: who.login, name: who.name, avatar: who.avatar }))
+      .concat(state.view === 'following' ? (data.reposts || []).filter(r => same(r.by.login, who.login)).map(r => asItem([r])) : [])
+      .sort((a, b) => b.ts - a.ts);
+  // Newest first unless another order is asked for; by what was made of them
+  // only where something was made of any.
+  const orders = ORDERS.filter(order => order !== 'top' || posts.some(score));
+  const order = orders.includes(state.order) ? state.order : 'latest';
+  if (order === 'top') posts = byScore(posts);
+  if (order === 'lucky') posts = dealt(posts, state.seed);
+  // Discover is for meeting people: each shows one post only, their first in this order.
+  if (meeting) posts = posts.filter((p, i) => posts.findIndex(q => q.login === p.login) === i);
   const shown = posts.slice(0, state.shown);
   let html = who ? profileHTML(who) : '', last = null;
   for (const p of shown) {
-    const label = period(p.date);
-    if (label !== last) { html += `<h2>${label}</h2>`; last = label; }
-    html += p.reposts ? repostHTML(p, !!who) : postHTML(p, state.view === 'discover' && !who ? byLogin.get(p.login) : null, !!who);
+    // By date the list is told in stretches of time; any other order runs through all of it.
+    const label = order === 'latest' ? period(p.date) : t('allTime');
+    if (label !== last) {
+      html += last === null ? `<div class="head"><h2>${label}</h2>${posts.length > 1 ? orderHTML(orders, order) : ''}</div>` : `<h2>${label}</h2>`;
+      last = label;
+    }
+    html += p.reposts ? repostHTML(p, !!who) : postHTML(p, meeting ? byLogin.get(p.login) : null, !!who);
   }
   if (!posts.length) html += `<p class="empty">${state.view === 'following' && !who ? t('emptyFollowing', data.following) : t('empty')}</p>`;
   if (posts.length > shown.length)
@@ -825,6 +900,7 @@ app.addEventListener('input', e => {
 app.addEventListener('click', e => {
   const pick = e.target.closest('.pick'), tab = e.target.closest('.tabs button'), nudge = e.target.closest('.nudge');
   const act = e.target.closest('[data-do]')?.dataset.do, rp = e.target.closest('.rp'), tongue = e.target.closest('[data-lang]');
+  const order = e.target.closest('.order button')?.dataset.order;
   if (nudge) { const row = app.querySelector('.people'); return row.scrollBy({ left: nudge.dataset.nudge * row.clientWidth * 0.8, behavior: 'smooth' }); }
   if (rp) {   // one already made opens where it is kept; otherwise a line to write it on
     const post = acts[rp.dataset.act];
@@ -836,7 +912,7 @@ app.addEventListener('click', e => {
   if (flip) { flipped.has(flip.dataset.flip) ? flipped.delete(flip.dataset.flip) : flipped.add(flip.dataset.flip); return refresh(); }
   if (act === 'home') {   // the start: the first list, everyone, from the top
     e.preventDefault();
-    Object.assign(state, { view: 'following', who: null, shown: PAGE });
+    Object.assign(state, { view: 'following', who: null, order: 'latest', shown: PAGE });
     writeHash();
     render();
     return window.scrollTo(0, 0);
@@ -854,10 +930,13 @@ app.addEventListener('click', e => {
   if (tab) {
     // The tab you are on takes you back to everyone, at the top.
     if (tab.dataset.view === state.view && !state.who && window.scrollY === 0) return;
-    Object.assign(state, { view: tab.dataset.view, who: null, shown: PAGE, everyone: tab.dataset.view === state.view && state.everyone });
+    const here = tab.dataset.view === state.view;
+    Object.assign(state, { view: tab.dataset.view, who: null, order: here && !state.who ? state.order : 'latest', shown: PAGE, everyone: here && state.everyone });
   } else if (pick) {
-    state.who = state.who === pick.dataset.login ? null : pick.dataset.login;
-    state.shown = PAGE;
+    Object.assign(state, { who: state.who === pick.dataset.login ? null : pick.dataset.login, order: 'latest', shown: PAGE });
+  } else if (order) {
+    Object.assign(state, { order, shown: PAGE });
+    if (order === 'lucky') deal();
   } else if (act === 'more') { state.shown += PAGE;
   } else if (act === 'everyone') { state.everyone = true;
   } else if (act === 'forget') { setMe('');
@@ -866,8 +945,8 @@ app.addEventListener('click', e => {
   } else if (act === 'back') { Object.assign(state, { step: state.step - 1, went: false });
   } else return;
   if (e.target.closest('.wizard')) return remake();   // a press in the steps draws the steps again
-  if (!tab && !pick) return refresh();   // anything else that is not a move keeps the reader's place
-  writeHash();   // a new person or tab starts at the top
+  if (!tab && !pick && !order) return refresh();   // anything else that is not a move keeps the reader's place
+  writeHash();   // a new person, tab or order starts at the top
   rerender();
   rewind();
 });

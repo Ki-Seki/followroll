@@ -3,9 +3,11 @@ name: Following
 run-name: ${{ github.event_name == 'discussion' && format('Repost {0}', github.event.action) || '' }}
 
 on:
-  # Every six hours, at minute 23
+  # Every three hours, at minute 23, on hours few other schedules use: 1, 4,
+  # 7 … 22 UTC. GitHub starts a scheduled run late when it is busy and drops
+  # some altogether: of four a day at 0, 6, 12 and 18, about two took place.
   schedule:
-    - cron: "23 */6 * * *"
+    - cron: "23 1-22/3 * * *"
   workflow_dispatch:
   push:
     branches:

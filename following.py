@@ -87,7 +87,7 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
 HERE = Path(__file__).resolve().parent
-VERSION = "1.2.0"                 # goes up with every release
+VERSION = "1.3.0"                 # goes up with every release
 UPSTREAM = "Ki-Seki/followroll"   # where the releases are published
 API_URL = "https://api.github.com/graphql"
 USER_AGENT = f"Mozilla/5.0 (compatible; followroll/{VERSION}; +https://github.com/{UPSTREAM})"
@@ -118,8 +118,10 @@ FEED_PATHS = (
     "blog/index.xml", "blog/feed.xml", "blog/atom.xml", "blog/rss.xml",
     "posts/index.xml", "post/index.xml", "feed.json",
 )
-# The sample posts that ship with the academicpages Jekyll template
-PLACEHOLDER_POST = re.compile(r"/posts/\d{4}/\d{2}/blog-post-\d+/?$")
+# What a feed can list that is no post: the sample posts that ship with the
+# academicpages Jekyll template, and a site's search page, which some Hugo
+# themes put in the feed with the rest
+NOT_A_POST = re.compile(r"/posts/\d{4}/\d{2}/blog-post-\d+/?$|^https?://[^/]+/search/?$")
 
 
 # ----------------------------------------------------------------- web
@@ -176,12 +178,65 @@ def text_of(body):
     return body.decode("utf-8", errors="replace")
 
 
-def plain(markup, limit=200):
-    """HTML to one line of text, cut at `limit` characters."""
+# Where a sentence may end: at a Chinese full stop, question or exclamation
+# mark; or at a Latin one with more text after it, the first character of
+# which is kept, since it tells whether a new sentence starts there.
+SENTENCE_END = re.compile(r"[。！？][”’」』）]*|[.!?][\"”’)\]]*(?=\s+(\S))")
+# Words of four letters or more that a full stop shortens rather than ends a
+# sentence after. A shorter word is always taken for one of these.
+ABBREVIATIONS = {"prof", "corp", "dept", "univ", "capt", "sept", "figs", "vols", "refs", "resp", "incl", "excl",
+                 "approx", "aprox", "ibid", "chap", "inkl", "evtl"}
+# What opens and what closes it: a sentence does not end inside one
+BRACKETS = ("()", "[]", "（）", "“”", "「」", "『』")
+
+
+def ends_sentence(text, match):
+    """Whether the mark found in `text` ends a sentence, as far as can be told.
+    Where it cannot be told, the answer is no: a summary cut mid-sentence
+    says so with its ellipsis, while one cut after "e.g.", "Mt." or the dot
+    of an address looks finished and is not."""
+    kept, after = text[:match.end()], match.group(1)
+    if after and not (after.isalpha() and not after.islower() or after in "\"“‘([「『（"):
+        return False   # what follows does not begin a sentence: a small letter, a number
+    if text[match.start()] == ".":
+        word = re.search(r"\w*$", text[:match.start()]).group()
+        # Not after a number in a list ("2.", unlike "2025."), nor after a
+        # short word, which may be an initial or an abbreviation, unless it
+        # has two capitals or a digit in it ("AI.", "iOS.", "T5.")
+        short = len(word) < 3 if word.isdigit() else 0 < len(word) < 4 and not (
+            len(word) > 1 and (sum(map(str.isupper, word)) > 1 or any(map(str.isdigit, word))))
+        if short or word.lower() in ABBREVIATIONS:
+            return False
+    # Nor in the middle of a remark in brackets, or of what someone said
+    return not (any(kept.count(opens) > kept.count(closes) for opens, closes in BRACKETS) or kept.count('"') % 2)
+
+
+def sentences(text):
+    """The whole sentences `text` begins with, when they make up at least half
+    of it: what is left of a text cut short once its unfinished last sentence
+    is taken off. None when there is no telling, or too little would be left."""
+    for match in reversed(list(SENTENCE_END.finditer(text))):
+        if ends_sentence(text, match):
+            return text[:match.end()] if match.end() * 2 >= len(text) else None
+    return None
+
+
+def clip(text, limit, whole=False):
+    """`text` cut at `limit` characters: with `whole`, at the end of a
+    sentence where it has one to end on, and otherwise where the limit falls,
+    with an ellipsis to say so."""
+    if len(text) <= limit:
+        return text
+    text = text[:limit].rstrip()
+    return whole and sentences(text) or text + "…"
+
+
+def plain(markup, limit=200, whole=False):
+    """HTML to one line of text, cut at `limit` characters as `clip` cuts."""
     markup = re.sub(r"<(script|style)\b.*?</\1>", " ", markup or "", flags=re.S | re.I)
     text = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", markup))).strip()
     text = re.sub(r" ([,.;:!?])", r"\1", text)   # a tag before punctuation leaves a space there
-    return text[:limit].rstrip() + ("…" if len(text) > limit else "")
+    return clip(text, limit, whole)
 
 
 def host(url):
@@ -330,9 +385,13 @@ def following(login):
 # --------------------------------------------------------------- feeds
 
 def timestamp(value):
-    """Seconds since the epoch for an RFC 822 or ISO 8601 date, or None."""
+    """Seconds since the epoch for an RFC 822 or ISO 8601 date, or None.
+
+    The year 1 is no date: it is what Hugo writes for a page that has none,
+    and read as it stands it would come out as New Year 2001. Nor is 1970 or
+    anything before it, which is how a missing date comes out elsewhere."""
     value = (value or "").strip()
-    if not value:
+    if not value or re.search(r"(?<![\d.])0001\b", value):
         return None
     try:
         when = email.utils.parsedate_to_datetime(value)
@@ -343,7 +402,7 @@ def timestamp(value):
             return None
     if when.tzinfo is None:
         when = when.replace(tzinfo=datetime.timezone.utc)
-    return int(when.timestamp())
+    return int(when.timestamp()) if when.timestamp() > 0 else None
 
 
 def name_of(element):
@@ -375,7 +434,7 @@ def xml_posts(base, body):
             "title": plain(fields.get("title"), 200),
             "url": urljoin(base, link) if link else None,
             "ts": timestamp(fields.get("pubdate") or fields.get("published") or fields.get("updated") or fields.get("date")),
-            "summary": plain(fields.get("description") or fields.get("summary") or fields.get("content") or fields.get("encoded")),
+            "summary": plain(fields.get("description") or fields.get("summary") or fields.get("content") or fields.get("encoded"), whole=True),
         })
     return posts, authors - {""}
 
@@ -394,8 +453,29 @@ def json_posts(base, body):
         "title": plain(item.get("title"), 200),
         "url": urljoin(base, item["url"]) if item.get("url") else None,
         "ts": timestamp(item.get("date_published") or item.get("date_modified")),
-        "summary": plain(item.get("summary") or item.get("content_html") or item.get("content_text")),
+        "summary": plain(item.get("summary") or item.get("content_html") or item.get("content_text"), whole=True),
     } for item in feed.get("items", []) if isinstance(item, dict)], authors
+
+
+WEEK = 7 * 86400
+
+
+def without_copies(posts, home):
+    """`posts`, newest first, without the second copy of one that was also
+    published somewhere else: two with the same title, on different sites,
+    within a week of each other. The copy on `home`, the feed's own site,
+    stands; failing that, the newer one."""
+    dropped, titles = set(), {}   # titles: the last post kept under each
+    for post in posts:
+        title = " ".join(post["title"].casefold().split())
+        twin = titles.get(title)
+        if title and twin and host(twin["url"]) != host(post["url"]) and abs(twin["ts"] - post["ts"]) < WEEK:
+            loser = twin if host(post["url"]) == home != host(twin["url"]) else post
+            dropped.add(id(loser))
+            if loser is post:
+                continue
+        titles[title] = post
+    return [post for post in posts if id(post) not in dropped]
 
 
 def read_feed(url, validators=None):
@@ -408,11 +488,11 @@ def read_feed(url, validators=None):
     # Real posts only: titled, dated, not in the future
     now = time.time()
     posts = [post for post in posts if post["url"] and post["title"] and post["ts"]
-             and post["ts"] < now + 86400 and not PLACEHOLDER_POST.search(post["url"])
+             and post["ts"] < now + 86400 and not NOT_A_POST.search(post["url"])
              and urlparse(post["url"]).scheme in ("http", "https")]   # a feed is untrusted input
     posts.sort(key=lambda post: post["ts"], reverse=True)
     # A feed can list the same address twice; the newer entry stands.
-    posts = list({post["url"]: post for post in reversed(posts)}.values())[::-1]
+    posts = without_copies(list({post["url"]: post for post in reversed(posts)}.values())[::-1], host(final))
     return (final, posts, authors, fresh) if posts else None
 
 
@@ -834,20 +914,59 @@ def new_blog(person, site, feed, posts, earlier):
 
     Within the stretch of time the feed covers, the feed is the truth: a post
     missing there was removed or moved by its author. Older than that, a post
-    has only scrolled out of the feed, and stays."""
+    has only scrolled out of the feed, and stays.
+
+    A post that is new here says when it came, as `seen`, if it is a recent
+    one: a feed often gives no more than the day, or brings a post hours
+    after its date, and a reader who came in between has still not seen it."""
     oldest = min(post["ts"] for post in posts)
     current = {post["url"] for post in posts}
     before = {post["url"]: post for post in earlier}
-    for post in posts:   # counts carried over until they are read again
-        for field in ("thread", "hn"):
-            if field in before.get(post["url"], {}):
-                post[field] = before[post["url"]][field]
+    now = int(time.time())
+    for post in posts:
+        if post["url"] in before:   # its counts are carried over until they are read again
+            post.update({field: before[post["url"]][field] for field in ("thread", "hn", "seen")
+                         if field in before[post["url"]]})
+        elif post["ts"] > now - WEEK:
+            post["seen"] = now
     kept = [post for post in earlier if post["ts"] < oldest and post["url"] not in current]
+    # One of two copies may have scrolled out of the feed while the other is still in it
+    posts = without_copies(posts + kept, host(feed))
     return {"login": person["login"], "name": person.get("name") or person["login"],
             "avatar": person.get("avatarUrl"), "site": site, "host": host(site), "feed": feed,
             "self": bool(person.get("self")),
-            "months": months(post["ts"] for post in posts + kept),
-            "posts": (posts + kept)[:POSTS_PER_BLOG]}
+            "months": months(post["ts"] for post in posts),
+            "posts": posts[:POSTS_PER_BLOG]}
+
+
+NO_DATE = 978307200   # New Year 2001: what the year 1 used to be read as
+
+
+def up_to_date(cache):
+    """Brings a list made before 1.3 to what 1.3 would have made of it. Done
+    once, when such a list is loaded.
+
+    Before 1.3 a page without a date came out as a post from New Year 2001 or
+    from the year 1, a site's search page could be listed as a post, a post
+    published at two sites was listed twice, and a summary was cut where 200
+    characters fell rather than at the end of a sentence. A translation goes
+    when its summary has changed, and when it has an ellipsis in the middle:
+    where DeepSeek used to put the one a cut summary ends in."""
+    for of in (cache, cache.get("discover") or {}):
+        for blog in of.get("blogs") or []:
+            posts = [post for post in blog["posts"]
+                     if post["ts"] > 0 and post["ts"] != NO_DATE and not NOT_A_POST.search(post["url"])]
+            blog["posts"] = without_copies(posts, host(blog.get("feed") or ""))
+            for post in blog["posts"]:
+                summary, tr = post.get("summary") or "", post.get("tr")
+                cut = summary.endswith("…")
+                ending = sentences(summary[:-1]) if cut and len(summary) >= 200 else None
+                if ending:
+                    post["summary"] = ending
+                if ending or cut and isinstance(tr, dict) and "…" in str(tr.get("summary")).rstrip("…"):
+                    post.pop("tr", None)
+        if "blogs" in of:   # a blog that was all such pages is not on the list at all
+            of["blogs"] = [blog for blog in of["blogs"] if blog["posts"]]
 
 
 def recent_dates(*lists):
@@ -1109,8 +1228,18 @@ def reposts_of(owner, followed, cache):
                   "avatar": person.get("avatarUrl")}
             reposts += [{**entry, "by": by} for entry in roll.get("reposts") or []]
     reposts.sort(key=lambda entry: entry["ts"], reverse=True)
+    # Like a post, a recent repost that is new here says when it came: the
+    # page of someone followed is read hours after they repost, or a day
+    # after they make it.
+    before = {(entry["by"]["login"], entry["url"]): entry for entry in cache.get("reposts", [])}
+    now = int(time.time())
     for entry in reposts:
         entry["date"] = iso(entry["ts"])
+        had = before.get((entry["by"]["login"], entry["url"]))
+        if had is None and entry["ts"] > now - WEEK:
+            entry["seen"] = now
+        elif had and "seen" in had:
+            entry["seen"] = had["seen"]
     return reposts[:MAX_POSTS], pages
 
 
@@ -1155,7 +1284,7 @@ TRANSLATE_SECONDS = 300        # no request starts after this long: what is left
 LANGUAGES = {"zh": "Simplified Chinese", "en": "English"}
 PROMPT = """You translate the titles and summaries of blog posts for a reading list into {language}.
 
-The input is a JSON object. Each value has a "title" and a "summary". Reply with a JSON object that has exactly the same keys, each value holding the "title" and the "summary" translated into {language}. Translate faithfully and naturally, the way a careful human translator would. Leave code, product names, numbers and URLs as they are, and keep people's names written in Latin letters exactly as they are: never turn a pinyin name into Chinese characters. A summary may be cut off mid-sentence: translate what is there and keep its trailing "…". Keep an empty summary empty. Reply with the JSON object only."""
+The input is a JSON object. Each value has a "title" and a "summary". Reply with a JSON object that has exactly the same keys, each value holding the "title" and the "summary" translated into {language}. Translate faithfully and naturally, the way a careful human translator would. Leave code, product names, numbers and URLs as they are, and keep people's names written in Latin letters exactly as they are: never turn a pinyin name into Chinese characters. A summary may stop mid-sentence, where it was cut off: translate what is there as it stands, without finishing the sentence and without adding an ellipsis. Keep an empty summary empty. Reply with the JSON object only."""
 
 
 class Refused(Exception):
@@ -1186,15 +1315,30 @@ def known_translations():
     return known
 
 
+def translated_summary(text, cut):
+    """A summary as DeepSeek gave it back, at most 600 characters. One of a
+    summary that was cut short ends in the ellipsis it was sent without; any
+    other ends where a sentence does."""
+    if not cut:
+        return clip(text, 600, whole=True)
+    text = text.replace("…", "")[:600].rstrip(" 。.，,；;：:")
+    return text + "…" if text else ""
+
+
 def ask_deepseek(items, lang):
     """Translates {id: {"title", "summary"}} into `lang`. Returns the ones that
     came back well formed, in the same shape; the tokens used; and whether the
     rest is worth asking for again in smaller pieces, which it is when DeepSeek
     turned the request down as it stands or its answer was cut short. Raises
     Refused when the key is no good."""
+    # A summary that was cut short is sent without its ellipsis, which goes
+    # back on at the end of the translation. Asked to carry it over, DeepSeek
+    # leaves it where the missing words would stand in the other language:
+    # in the middle of the sentence, as often as not.
+    sent = {name: {**item, "summary": item["summary"].rstrip("…")} for name, item in items.items()}
     body = {"model": TRANSLATE_MODEL,
             "messages": [{"role": "system", "content": PROMPT.replace("{language}", LANGUAGES[lang])},
-                         {"role": "user", "content": json.dumps(items, ensure_ascii=False)}],
+                         {"role": "user", "content": json.dumps(sent, ensure_ascii=False)}],
             "thinking": {"type": "disabled"}, "max_tokens": 8192, "stream": False}
     unfit = (400, 413, 422)   # the request itself will not do
     for pause in (0, 5):
@@ -1215,8 +1359,8 @@ def ask_deepseek(items, lang):
     for name, source in items.items():
         got = answer.get(name) if isinstance(answer, dict) else None
         if isinstance(got, dict) and short(got.get("title"), 300) and isinstance(got.get("summary", ""), str):
-            done[name] = {"lang": lang, "title": short(got["title"], 300),
-                          "summary": short(got.get("summary", ""), 600) if source["summary"] else ""}
+            summary = translated_summary(short(got.get("summary", ""), 3000), source["summary"].endswith("…"))
+            done[name] = {"lang": lang, "title": short(got["title"], 300), "summary": summary if source["summary"] else ""}
     usage = (reply.get("usage") if isinstance(reply, dict) else None) or {}
     return done, usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0), True
 
@@ -1453,6 +1597,9 @@ def main():
                  "address other followroll pages look for yours at. Rename it under Settings → General.")
 
     cache = load_previous(output, "following.json")
+    made = RELEASE.match(str((cache or {}).get("version") or ""))   # the version that made it, if it says
+    if cache and (not made or is_newer("1.3.0", made.group(1))):
+        up_to_date(cache)
     result = collect(cache, load_previous(output, "state.json"))
     if result is None:
         if cache is None:
@@ -1470,7 +1617,7 @@ def main():
     (output / "following.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     # The owner's own reposts, for the pages of the people who follow them.
     owner = result["owner"]
-    mine = [{field: value for field, value in entry.items() if field not in ("by", "date")}
+    mine = [{field: value for field, value in entry.items() if field not in ("by", "date", "seen")}
             for entry in result.get("reposts", []) if entry["by"]["login"] == owner["login"]]
     (output / "reposts.json").write_text(json.dumps(
         {"login": owner["login"], "name": owner["name"], "reposts": mine}, ensure_ascii=False, indent=1), encoding="utf-8")

@@ -88,9 +88,15 @@ b { font-weight: 600; }
 /* ---------------------------------------------------------- columns */
 .cols { display: grid; grid-template-columns: minmax(0, 620px) 280px; justify-content: space-between; align-items: start; padding-bottom: 96px; scroll-margin-top: var(--bar); }
 
-/* A stretch of time, named quietly */
-.feed > h2 { margin-top: 44px; padding-bottom: 6px; color: var(--faint); font-size: 13px; font-weight: 500; line-height: 20px; }
-.feed > h2:first-child { margin-top: 30px; }
+/* A stretch of time, named quietly. The first one shares its line with the
+   orders the list can be read in, which are quieter still until pointed at. */
+.feed > h2, .head { margin-top: 44px; padding-bottom: 6px; }
+.feed > h2, .head h2, .order button { color: var(--faint); font-size: 13px; font-weight: 500; line-height: 20px; }
+.head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.head:first-child { margin-top: 30px; }
+.order { display: flex; gap: 14px; }
+.order button { transition: color .15s; }
+.order button:hover, .order .on { color: var(--fg); }
 
 /* A post: who and when on one line, then its words, then what was made of it */
 .post { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 14px; padding: 18px 0; border-top: 1px solid var(--line); }
@@ -330,8 +336,8 @@ noscript .empty { padding: 20vh 24px; }
     .nudge.next { right: -16px; }
     .more-left .prev, .more-right .next { opacity: 1; pointer-events: auto; }
   }
-  .feed > h2 { margin-top: 32px; }
-  .feed > h2:first-child { margin-top: 20px; }
+  .feed > h2, .head { margin-top: 32px; }
+  .head:first-child { margin-top: 20px; }
   .post { grid-template-columns: 32px minmax(0, 1fr); column-gap: 12px; padding: 16px 0; }
   .post::before, .post h3 a::after { inset: 0 -12px; }
   .av img { width: 32px; height: 32px; }
