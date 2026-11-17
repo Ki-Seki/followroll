@@ -95,7 +95,8 @@ UPSTREAM = "Ki-Seki/followroll"   # where the releases are published
 API_URL = "https://api.github.com/graphql"
 USER_AGENT = f"Mozilla/5.0 (compatible; followroll/{VERSION}; +https://github.com/{UPSTREAM})"
 TIMEOUT = 12
-MAX_BYTES = 3_000_000
+MAX_BYTES = 3_000_000    # the most that is read of someone's page or feed
+OWN_BYTES = 30_000_000   # and of this page's own list from the last run, which 3,000 posts make far larger than a feed
 MAX_PEOPLE = int(os.environ.get("FOLLOWING_MAX_PEOPLE") or 500)
 WORKERS = int(os.environ.get("FOLLOWING_WORKERS") or 24)
 DISCOVER_PEOPLE = int(os.environ.get("FOLLOWING_DISCOVER") or 200)
@@ -137,11 +138,12 @@ NOT_A_POST = re.compile(r"/posts/\d{4}/\d{2}/blog-post-\d+/?$|^https?://[^/]+/se
 ACCEPT = "text/html,application/xhtml+xml,application/atom+xml,application/rss+xml,application/xml;q=0.9,*/*;q=0.8"
 
 
-def fetch(url, validators=None):
+def fetch(url, validators=None, limit=MAX_BYTES):
     """Returns (status, final URL, bytes, validators).
 
     status is "ok", "same" (unchanged since the validators were issued),
-    "gone" (the server says there is nothing here) or "fail" (no usable answer)."""
+    "gone" (the server says there is nothing here) or "fail" (no usable
+    answer, one longer than `limit` bytes included)."""
     headers = {"User-Agent": USER_AGENT, "Accept": ACCEPT}
     if validators and validators.get("etag"):
         headers["If-None-Match"] = validators["etag"]
@@ -149,8 +151,8 @@ def fetch(url, validators=None):
         headers["If-Modified-Since"] = validators["modified"]
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=TIMEOUT) as response:
-            body = response.read(MAX_BYTES + 1)
-            if len(body) > MAX_BYTES:
+            body = response.read(limit + 1)
+            if len(body) > limit:
                 return "fail", url, b"", None
             fresh = {"etag": response.headers.get("ETag"), "modified": response.headers.get("Last-Modified")}
             return "ok", response.geturl(), body, fresh
@@ -161,9 +163,9 @@ def fetch(url, validators=None):
         return "fail", url, b"", None
 
 
-def get(url):
+def get(url, limit=MAX_BYTES):
     """Returns (final URL, bytes) or None."""
-    status, final, body, _ = fetch(url)
+    status, final, body, _ = fetch(url, limit=limit)
     return (final, body) if status == "ok" else None
 
 
@@ -1463,7 +1465,7 @@ def load_previous(output, name):
     try:
         if local.exists():
             return json.loads(local.read_text(encoding="utf-8"))
-        response = get(previous_url(name)) if previous_url(name) else None
+        response = get(previous_url(name), OWN_BYTES) if previous_url(name) else None
         return json.loads(response[1]) if response else None
     except ValueError:
         return None
