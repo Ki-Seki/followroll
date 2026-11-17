@@ -158,7 +158,7 @@ b { font-weight: 600; }
 
 .more, .all { display: block; width: 100%; height: 38px; margin-top: 20px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); color: var(--mute); font-size: 13px; font-weight: 500; transition: background .15s, color .15s; }
 .more:hover, .all:hover { background: var(--hover); color: var(--fg); }
-.empty { padding: 72px 0; color: var(--mute); text-align: center; }
+.empty, .wait { padding: 72px 0; color: var(--mute); text-align: center; }
 .updated { color: var(--faint); font-size: 12px; line-height: 16px; }
 .feed .updated { display: none; }
 

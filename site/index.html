@@ -16,6 +16,8 @@
 <!-- The appearance chosen here before, set before anything is drawn -->
 <script>try { var chosen = localStorage.getItem('followroll:theme'); if (chosen === 'light' || chosen === 'dark') document.documentElement.dataset.theme = chosen; } catch (e) {}</script>
 <link rel="stylesheet" href="style.css">
+<!-- Fetched while the list below is still arriving, rather than after it -->
+<link rel="preload" href="app.js" as="script">
 </head>
 <body>
 <div id="app"></div>

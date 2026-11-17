@@ -45,7 +45,7 @@ const WORDS = {
     following: 'Following', discover: 'Discover',
     people: 'People', toDiscover: 'People to discover', monthsKey: 'Posts a month, past year',
     showAll: n => `Show all ${n}`, more: n => `Show ${n} more`,
-    empty: 'Nothing here yet.',
+    empty: 'Nothing here yet.', fetching: 'Getting the older posts…',
     emptyFollowing: n => `None of the ${n} people followed here has a blog that could be found yet.`,
     week: 'Past week', month: 'Past month', year: 'Past year', inYear: y => String(y), allTime: 'All time',
     order: 'Order', orders: { latest: 'Latest', top: 'Top', lucky: 'Lucky' },
@@ -112,7 +112,7 @@ const WORDS = {
     following: '关注', discover: '发现',
     people: '博主', toDiscover: '值得认识的人', monthsKey: '近一年每月发文',
     showAll: n => `显示全部 ${n} 位`, more: n => `再显示 ${n} 篇`,
-    empty: '这里还没有内容。',
+    empty: '这里还没有内容。', fetching: '正在取更早的文章…',
     emptyFollowing: n => `在关注的 ${n} 个人里，还没找到有博客的。`,
     week: '近一周', month: '近一月', year: '近一年', inYear: y => `${y} 年`, allTime: '全部时间',
     order: '排序', orders: { latest: '最新', top: '最热', lucky: '手气不错' },
@@ -333,6 +333,37 @@ const leave = () => keep.set(SEEN, String(Math.floor(Date.parse(data.updated) / 
 window.addEventListener('pagehide', leave);
 document.addEventListener('visibilitychange', () => { if (document.hidden) leave(); });
 
+// The page opens with the newest posts of each list in it. The older ones
+// follow in a file of their own once it is up, so that a long list does not
+// make a slow page. Until they are here, or have failed to come, `whole` is
+// false, and a list goes back only as far as it is all there: the few older
+// posts it came with, for the first screen's sake, wait for the others.
+let whole = !data.older;
+const there = of => p => whole || p.ts >= (of.since || 0);
+function absorb(later) {
+  for (const [of, more] of [[data.discover, later.discover], [data, later.blogs]]) {   // the owner's own list has the last word
+    if (!of || !more) continue;
+    for (const b of of.blogs) {
+      if (!more[b.login]) continue;
+      for (const p of more[b.login]) {
+        known.set(key(p.url), { ...p, login: b.login, name: b.name, avatar: b.avatar });
+        everyPost.push(p);
+      }
+      b.posts = b.posts.concat(more[b.login]).sort((x, y) => y.ts - x.ts);
+    }
+    delete of.timeline;
+  }
+}
+// With every post here, a list that was waiting for them is drawn, and one
+// that has grown is drawn again: unless that would take a line from under
+// the reader who is writing it, whose next move then draws it.
+function arrived() {
+  whole = true;
+  const feed = app.querySelector('.feed');
+  if (feed && !document.querySelector('.as, dialog[open]') && (state.who || state.order !== 'latest' || !feed.querySelector('.more'))) refresh();
+}
+if (!whole) fetch(data.older).then(reply => reply.json()).then(absorb).catch(() => {}).then(arrived);
+
 // The latest release, if this copy is older than it
 function newer() {
   const numbers = v => String(v).split('.').map(Number).concat(0, 0).slice(0, 3);
@@ -401,7 +432,7 @@ function repostButton(p) {
 // own list, the reposts as well, and a post that was reposted shows once
 // there: as the repost. Worked out once.
 function timeline(of) {
-  of.timeline ??= of.blogs.flatMap(b => b.posts.map(p => ({ ...p, login: b.login, name: b.name, avatar: b.avatar })))
+  of.timeline ??= of.blogs.flatMap(b => b.posts.filter(there(of)).map(p => ({ ...p, login: b.login, name: b.name, avatar: b.avatar })))
     .filter(p => of !== data || !reposted.has(key(p.url)))
     .concat(of === data ? [...reposted.values()].map(asItem) : [])
     .sort((a, b) => b.ts - a.ts);
@@ -542,30 +573,30 @@ function feedHTML() {
   const byLogin = new Map(blogs.map(b => [b.login, b]));
   // One person: what they wrote and, on the owner's list, what they reposted.
   let posts = !who ? timeline(list())
-    : (who.blog ? who.blog.posts : []).map(p => ({ ...p, login: who.login, name: who.name, avatar: who.avatar }))
+    : (who.blog ? who.blog.posts : []).filter((p, i) => !i || there(list())(p)).map(p => ({ ...p, login: who.login, name: who.name, avatar: who.avatar }))
       .concat(state.view === 'following' ? (data.reposts || []).filter(r => same(r.by.login, who.login)).map(r => asItem([r])) : [])
       .sort((a, b) => b.ts - a.ts);
   // Newest first unless another order is asked for; by what was made of them
-  // only where something was made of any.
-  const orders = ORDERS.filter(order => order !== 'top' || posts.some(score));
+  // only where something was made of any, which cannot be told before the
+  // older posts are here. Any order but newest first takes every post there
+  // is, so until then such a list waits under its first line.
+  const orders = ORDERS.filter(order => order !== 'top' || !whole || posts.some(score));
   const order = orders.includes(state.order) ? state.order : 'latest';
-  if (order === 'top') posts = byScore(posts);
-  if (order === 'lucky') posts = dealt(posts, state.seed);
-  // Discover is for meeting people: each shows one post only, their first in this order.
-  if (meeting) posts = posts.filter((p, i) => posts.findIndex(q => q.login === p.login) === i);
-  const shown = posts.slice(0, state.shown);
-  let html = who ? profileHTML(who) : '', last = null;
+  const waiting = order !== 'latest' && !whole;
+  if (order === 'top' && !waiting) posts = byScore(posts);
+  if (order === 'lucky' && !waiting) posts = dealt(posts, state.seed);
+  const shown = waiting ? [] : posts.slice(0, state.shown);
+  // By date the list is told in stretches of time; any other order runs through all of it.
+  const stretch = p => (order === 'latest' ? period(p.date) : t('allTime'));
+  let html = who ? profileHTML(who) : '', last = posts.length ? stretch(posts[0]) : null;
+  if (posts.length) html += `<div class="head"><h2>${last}</h2>${posts.length > 1 ? orderHTML(orders, order) : ''}</div>`;
   for (const p of shown) {
-    // By date the list is told in stretches of time; any other order runs through all of it.
-    const label = order === 'latest' ? period(p.date) : t('allTime');
-    if (label !== last) {
-      html += last === null ? `<div class="head"><h2>${label}</h2>${posts.length > 1 ? orderHTML(orders, order) : ''}</div>` : `<h2>${label}</h2>`;
-      last = label;
-    }
+    if (stretch(p) !== last) html += `<h2>${last = stretch(p)}</h2>`;
     html += p.reposts ? repostHTML(p, !!who) : postHTML(p, meeting ? byLogin.get(p.login) : null, !!who);
   }
   if (!posts.length) html += `<p class="empty">${state.view === 'following' && !who ? t('emptyFollowing', data.following) : t('empty')}</p>`;
-  if (posts.length > shown.length)
+  if (waiting) html += `<p class="wait">${t('fetching')}</p>`;
+  if (!waiting && posts.length > shown.length)
     html += `<button class="more" type="button" data-do="more">${t('more', Math.min(PAGE, posts.length - shown.length))}</button>`;
   return html + updatedHTML();
 }
@@ -646,7 +677,7 @@ const askHTML = (place, words) => `<h2>${words}<a class="anchor" href="#${place}
 function aboutHTML() {
   const owner = data.owner, first = owner.name.split(/\s+/)[0];
   const blogs = data.blogs.filter(b => !b.self).length;
-  const posts = data.blogs.reduce((sum, b) => sum + b.posts.length, 0);
+  const posts = data.posts ?? data.blogs.reduce((sum, b) => sum + b.posts.length, 0);   // those of the owner's list, the ones still to come included
   const step = (icon, big, label) => `<div class="step">${icon}<b>${big}</b><small>${label}</small></div>`;
   const then = `<i>${ICON.arrow}</i>`, flow = t('flow');
   return `<main class="wrap"><div class="about">

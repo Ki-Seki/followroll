@@ -23,7 +23,10 @@ batch of second-degree accounts it has not seen, until all of them are covered.
 
 Writes following.json into the output folder, next to the page that displays
 it (the files in site/), reposts.json, and state.json, what this run learned about each
-account. The next run reads both back from the published site: someone known
+account. The page itself carries only the newest posts of each list, so that
+it opens quickly however long the list has grown; the older ones go into a
+file beside it, which the page fetches once it is up. The next run reads
+following.json and state.json back from the published site: someone known
 to have no blog is left alone for a month, a known feed is asked only whether
 it has changed, and older posts keep the counts they had.
 
@@ -87,7 +90,7 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
 HERE = Path(__file__).resolve().parent
-VERSION = "1.3.0"                 # goes up with every release
+VERSION = "1.4.0"                 # goes up with every release
 UPSTREAM = "Ki-Seki/followroll"   # where the releases are published
 API_URL = "https://api.github.com/graphql"
 USER_AGENT = f"Mozilla/5.0 (compatible; followroll/{VERSION}; +https://github.com/{UPSTREAM})"
@@ -96,10 +99,15 @@ MAX_BYTES = 3_000_000
 MAX_PEOPLE = int(os.environ.get("FOLLOWING_MAX_PEOPLE") or 500)
 WORKERS = int(os.environ.get("FOLLOWING_WORKERS") or 24)
 DISCOVER_PEOPLE = int(os.environ.get("FOLLOWING_DISCOVER") or 200)
-POSTS_PER_BLOG = 100    # posts kept per blog, as they build up over the runs
-DISCOVER_POSTS = 3      # posts kept per blog on the Discover list, none older than a year
-MAX_POSTS = 1500        # posts kept in all; the oldest go first
+POSTS_PER_BLOG = 300    # posts kept per blog, as they build up over the runs
+# How many posts a page holds was settled by measuring one on a mid-range
+# phone. It opens with the newest OPENING_POSTS of each list, about 100 KB
+# and a second on a slow connection whatever the total; the rest follow, and
+# MAX_POSTS of them are all there within five seconds on that connection.
+MAX_POSTS = 3000        # posts kept in all, the owner's own list first; beyond that the oldest go
+OPENING_POSTS = 150     # the newest posts of each list that a page opens with
 COUNTED_POSTS = 20      # newest posts of a blog whose comment counts are read
+DISCOVER_COUNTED = 3    # the same for a blog on Discover, none of them older than a year
 DISCOVER_LIMIT = 2000   # second-degree accounts considered at all, best-ranked first
 REPO = "followroll"     # every copy of this repository keeps this name, so pages can find each other
 REPOSTS = 100           # newest reposts kept per person
@@ -975,15 +983,15 @@ def recent_dates(*lists):
     return sorted({ts for dates in lists for ts in dates if ts > start})
 
 
-def shown_on_discover(posts):
-    """What the Discover list shows of a blog: its newest few posts, none older than a year."""
+def last_year(posts):
+    """The posts of the last year. A blog that has any is on the Discover list."""
     year = time.time() - 365 * 86400
-    return [post for post in posts if post["ts"] > year][:DISCOVER_POSTS]
+    return [post for post in posts if post["ts"] > year]
 
 
 def counted(posts, full):
-    """The posts whose counts are worth reading: a page of them, or just what Discover shows."""
-    return posts[:COUNTED_POSTS] if full else shown_on_discover(posts)
+    """The posts whose counts are worth reading: the newest of a blog, fewer of them on Discover."""
+    return posts[:COUNTED_POSTS] if full else last_year(posts)[:DISCOVER_COUNTED]
 
 
 def refresh_counts(posts, comments, first_page=None, full=True):
@@ -1019,11 +1027,13 @@ def revisit(person, known, full):
     key = person["login"].lower()
     before = BLOGS.get(person["login"])
     # "Has it changed?" is only worth asking when the answer saves work. It
-    # does when the old entry can be reused, which it can when it holds as
-    # many posts as asked for. And it does for a blog that had nothing recent
-    # enough for Discover to show: unchanged, it still has not.
-    dormant = not before and not full and not shown_on_discover([{"ts": ts} for ts in known.get("dates") or []])
-    reusable = (before or dormant) and (known.get("full") or not full)
+    # does when the old entry can be reused, which it can when it was made to
+    # hold as many posts as one is now: before 1.4 that was 100 on the
+    # owner's list and 3 on Discover. And it does for a blog that had nothing
+    # recent enough to be on Discover: unchanged, it still has not.
+    dormant = not before and not full and not last_year([{"ts": ts} for ts in known.get("dates") or []])
+    held = known.get("holds") or (100 if known.get("full") else 3)
+    reusable = dormant or before and held >= POSTS_PER_BLOG
     feed = read_feed(known["feed"], known.get("validators") if reusable else None)
     if feed is None:
         return None
@@ -1042,7 +1052,7 @@ def revisit(person, known, full):
     blog = new_blog(person, known["site"], address, posts, (before or {}).get("posts", []))
     comments = counts_again(person, blog, comments, full)
     NEW[key] = {**known, "checked": int(time.time()), "feed": address, "validators": validators,
-                "comments": comments, "full": full, "failing": None,
+                "comments": comments, "holds": POSTS_PER_BLOG, "failing": None,
                 "dates": recent_dates(known.get("dates") or [], [post["ts"] for post in posts])}
     return blog
 
@@ -1100,7 +1110,7 @@ def blog_of(person, full=True):
         NEW[key] = {"website": website, "checked": int(time.time()), "site": site, "feed": feed,
                     "validators": validators, "comments": comments, "rules": RULES,
                     "dates": recent_dates((known.get("dates") or []) if same else [], [post["ts"] for post in posts]),
-                    "full": full}
+                    "holds": POSTS_PER_BLOG}
         return blog
     if known and known.get("feed") and known.get("website") == website and not not_theirs:
         # A blog found before can't be read today. It stays as it was, and is
@@ -1471,17 +1481,21 @@ def dated(blogs):
     return blogs
 
 
-def within_budget(blogs):
-    """Trims the oldest posts across all blogs once there are more than MAX_POSTS."""
+def within_budget(blogs, limit):
+    """Trims the oldest posts across `blogs` once there are more than `limit`
+    of them; a blog always keeps its newest post. Returns the blogs."""
     every = sorted((post["ts"] for blog in blogs for post in blog["posts"]), reverse=True)
-    if len(every) > MAX_POSTS:
-        for blog in blogs:   # a blog always keeps its newest post
-            blog["posts"] = blog["posts"][:1] + [post for post in blog["posts"][1:] if post["ts"] >= every[MAX_POSTS - 1]]
+    if len(every) > limit:
+        oldest = every[limit - 1] if limit > 0 else float("inf")
+        for blog in blogs:
+            blog["posts"] = blog["posts"][:1] + [post for post in blog["posts"][1:] if post["ts"] >= oldest]
     return blogs
 
 
-def discover(people, taken, before):
-    """Blogs one step further out: accounts followed by the people you follow.
+def discover(people, taken, before, room):
+    """Blogs one step further out: accounts followed by the people you follow,
+    those of them who posted in the last year, with as many of their posts as
+    there is `room` for.
 
     `before` is the previous run's Discover list, kept as it is when this run
     could not read every following list: half the picture would rank
@@ -1505,17 +1519,14 @@ def discover(people, taken, before):
         found = list(pool.map(lambda entry: blog_of(entry["person"], full=False), ranked))
     blogs = []
     for entry, blog in zip(ranked, found):
-        if not blog or blog["host"] in taken:
-            continue
-        blog["posts"] = shown_on_discover(blog["posts"])
-        if blog["posts"]:
+        if blog and blog["host"] not in taken and last_year(blog["posts"]):
             blog["via"], blog["via_count"] = entry["via"][:3], len(entry["via"])
             blogs.append(blog)
     hosts = collections.Counter(blog["host"] for blog in blogs)
     blogs = [blog for blog in blogs if hosts[blog["host"]] == 1]
     # Most vouched-for first; the page orders the posts by date itself.
     blogs.sort(key=lambda blog: (-blog["via_count"], -blog["posts"][0]["ts"]))
-    add_hacker_news(blogs)
+    add_hacker_news(within_budget(blogs, room))
     return {"candidates": len(candidates), "looked_at": len(ranked), "waiting": len(unseen) - len(batch),
             "blogs": dated(blogs)}
 
@@ -1544,16 +1555,18 @@ def collect(cache, state):
     hosts = collections.Counter(blog["host"] for blog in blogs)
     blogs = [blog for blog in blogs if hosts[blog["host"]] == 1 and blog["posts"]]
     blogs.sort(key=lambda blog: blog["posts"][0]["ts"], reverse=True)
-    add_hacker_news(blogs)
+    add_hacker_news(within_budget(blogs, MAX_POSTS))
     name = owner["name"] or owner["login"]
-    found = discover(people, set(hosts), cache.get("discover")) if DISCOVER_PEOPLE else None
+    # Discover has what the owner's own list leaves of the room there is.
+    room = MAX_POSTS - sum(len(blog["posts"]) for blog in blogs)
+    found = discover(people, set(hosts), cache.get("discover"), room) if DISCOVER_PEOPLE else None
     reposts, pages = reposts_of(owner, people[:-1], cache)
     latest = latest_release() or cache.get("latest")   # no answer: the last one known
     # Accounts this run did not get to are not forgotten straight away.
     for key, entry in OLD.items():
         if key not in NEW and time.time() - entry.get("checked", 0) < FORGET:
             NEW[key] = entry
-    blogs = dated(within_budget(blogs))
+    blogs = dated(blogs)
     translate(blogs + ((found or {}).get("blogs") or []))
     return {"updated": iso(time.time()),
             "owner": {"login": owner["login"], "name": name, "avatar": owner["avatarUrl"], "url": owner["url"]},
@@ -1563,15 +1576,64 @@ def collect(cache, state):
             "latest": latest}
 
 
+def page_key(url):
+    """A post's address the way the page compares addresses: without the
+    scheme, a leading "www.", a fragment, or slashes at the end."""
+    return re.sub(r"/+$", "", re.sub(r"#.*$", "", re.sub(r"^https?://(www\.)?", "", url, flags=re.I)))
+
+
+def opening(result):
+    """What a page opens with, and what follows once it is up: the list with
+    only the newest OPENING_POSTS posts of each of its two lists, and the
+    posts left out of that, by list and login.
+
+    All of a page's list has to arrive before any of it is drawn, so a long
+    one would make a slow page. Whatever the first screen can show stays in:
+    every blog's newest post, and every post someone reposted. A list that
+    has posts left out says `since` when it is whole, so that the page does
+    not show those few as if nothing lay between them and the rest."""
+    reposted = {page_key(entry["url"]) for entry in result.get("reposts") or []}
+    opens, later = {**result, "posts": sum(len(blog["posts"]) for blog in result["blogs"])}, {}
+    for name, of in (("blogs", result), ("discover", result.get("discover"))):
+        if not of:
+            continue
+        dates = sorted((post["ts"] for blog in of["blogs"] for post in blog["posts"]), reverse=True)
+        since = dates[OPENING_POSTS - 1] if len(dates) > OPENING_POSTS else 0
+        blogs, left = [], {}
+        for blog in of["blogs"]:
+            stays, goes = [], []
+            for n, post in enumerate(blog["posts"]):
+                (stays if n == 0 or post["ts"] >= since or page_key(post["url"]) in reposted else goes).append(post)
+            blogs.append({**blog, "posts": stays})
+            if goes:
+                left[blog["login"]] = goes
+        if left:
+            later[name] = left
+        if of is result:
+            opens.update({"blogs": blogs}, **({"since": since} if left else {}))
+        else:
+            opens[name] = {**of, "blogs": blogs, **({"since": since} if left else {})}
+    return opens, later
+
+
 def write_page(output, result):
     """Copies the page next to the list, with the list and its title filled in."""
     shutil.copytree(HERE / "site", output, dirs_exist_ok=True)
+    opens, later = opening(result)
+    for stale in output.glob("older-*.json"):
+        stale.unlink()
+    if later:
+        # Named after what is in it, so a page that a browser kept from an
+        # earlier build never gets the older posts of another one.
+        text = json.dumps(later, ensure_ascii=False, separators=(",", ":"))
+        opens["older"] = f"older-{hashlib.sha256(text.encode()).hexdigest()[:10]}.json"
+        (output / opens["older"]).write_text(text, encoding="utf-8")
     fields = {
         "title": html.escape(f"{result['title']} · followroll"),
         "description": html.escape(f"Recent posts from the blogs of the people @{result['owner']['login']} follows on GitHub."),
         "avatar": html.escape(result["owner"]["avatar"]),
         # Inside <script>, only a closing tag could end the element early.
-        "data": json.dumps(result, ensure_ascii=False).replace("</", "<\\/"),
+        "data": json.dumps(opens, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/"),
     }
     page = (HERE / "site" / "index.html").read_text(encoding="utf-8")
     page = re.sub(r"\{\{(\w+)\}\}", lambda match: fields[match.group(1)], page)
