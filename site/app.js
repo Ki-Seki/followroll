@@ -527,7 +527,7 @@ function postHTML(p, blog, solo) {
   return `<article class="post${solo ? ' solo' : ''}">
 ${solo ? '' : `<a class="av" ${toPerson(p.login)} tabindex="-1" aria-hidden="true">${faceHTML(p, 36)}</a>`}
 <div>
-<div class="by">${solo ? '' : `<a class="who" ${toPerson(p.login)}>${esc(p.name)}</a>`}${time(p.date)}${freshHTML(p)}${why}</div>
+<div class="by">${solo ? '' : `<a class="who" ${toPerson(p.login)}><span>${esc(p.name)}</span></a>`}${time(p.date)}${freshHTML(p)}${why}</div>
 ${wordsHTML(p)}
 ${infoHTML(p)}
 </div></article>`;
@@ -547,7 +547,7 @@ ${solo ? '' : `<a class="av" ${toPerson(r.by.login)} tabindex="-1" aria-hidden="
 <div class="by"><b>${solo ? t('repostedSolo') : t('reposted', who)}</b>${time(item.date)}${freshHTML(item)}</div>
 ${notes}
 <div class="quote">
-<div class="by"><a class="who" ${toPerson(p.login)}>${p.avatar ? faceHTML(p, 20) : ''}${esc(p.name)}</a>${p.date ? time(p.date) : ''}</div>
+<div class="by"><a class="who" ${toPerson(p.login)}>${p.avatar ? faceHTML(p, 20) : ''}<span>${esc(p.name)}</span></a>${p.date ? time(p.date) : ''}</div>
 ${wordsHTML(p)}
 </div>
 ${infoHTML(p)}

@@ -104,11 +104,13 @@ b { font-weight: 600; }
 .av { position: relative; z-index: 1; align-self: start; margin-top: 2px; border-radius: 50%; }
 .by { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--faint); font-size: 13px; line-height: 20px; white-space: nowrap; }
 .who, .repost .by b a { position: relative; z-index: 1; border-radius: 6px; color: var(--fg); font-size: 14px; font-weight: 500; transition: background .15s; }
-.who { display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; margin: -2px -6px; padding: 2px 6px; text-overflow: ellipsis; }
+.who { display: inline-flex; align-items: center; gap: 8px; min-width: 0; margin: -2px -6px; padding: 2px 6px; }
 .who img { flex: none; }
+/* A name gives way last, and says so when it does */
+.who span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .who:hover, .by b a:hover { background: var(--press); }
 .who + time::before, .by b + time::before, .why::before { content: "·"; margin-right: 8px; }
-.why { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.why { flex-shrink: 999; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .post h3, .card h3 { margin-top: 4px; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -.012em; }
 .post h3 { overflow-wrap: anywhere; text-wrap: balance; }
 /* The whole row opens the post; a title already read goes quiet. */
@@ -349,5 +351,12 @@ noscript .empty { padding: 20vh 24px; }
   .prefs dt { padding-right: 20px; }
   .card { grid-template-columns: minmax(0, 1fr); padding: 18px; }
   .card .shot { grid-column: 1; grid-row: auto; margin-top: 16px; }
+}
+/* On a phone there is no room beside the name and the date for why someone
+   is here: it takes the line below, and the name the room it needs. */
+@media (max-width: 560px) {
+  .by:has(.why) { display: grid; grid-template-columns: minmax(0, max-content) repeat(2, max-content) minmax(0, 1fr); gap: 0 8px; }
+  .why { grid-column: 1 / -1; }
+  .why::before { content: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
